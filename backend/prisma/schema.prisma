@@ -11,50 +11,86 @@ datasource db {
 }
 
 model Claim {
-  id           String   @id @default(cuid())
-  policyId     String
-  amount       BigInt
-  details      String   @db.VarChar(2000)
-  evidenceUrls Json?    // ["https://ipfs...", ...]
-  status       ClaimStatus @default(PENDING)
-  createdAt    DateTime @default(now())
-  deadline     DateTime?
-  ledger       BigInt?
+  id                Int       @id @default(autoincrement())
+  policyId          String
+  creatorAddress    String
+  amount            String
+  description       String?
+  evidenceHash      String?
+  status            ClaimStatus @default(PENDING)
+  isFinalized       Boolean   @default(false)
+  createdAtLedger   Int
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  updatedAtLedger   Int       @default(0)
 
-  votes     Vote[]
-  policy    Policy? @relation(fields: [policyId], references: [id])  // FK to policies table (future)
+  // Relations
+  policy            Policy    @relation(fields: [policyId], references: [id])
+  votes             Vote[]
 
+  @@index([status])
+  @@index([createdAt])
+  @@index([policyId])
   @@map("claims")
 }
 
 model Vote {
-  id        String   @id @default(cuid())
-  claimId   String
-  voter     String   // wallet G...
-  vote      Boolean  // true=approve
-  ledger    BigInt
-  timestamp DateTime @default(now())
+  id            Int       @id @default(autoincrement())
+  claimId       Int
+  voterAddress  String
+  vote          VoteType
+  votingPower   String    @default("1")
+  txHash        String?
+  votedAtLedger Int
+  createdAt     DateTime  @default(now())
 
-  claim Claim @relation(fields: [claimId], references: [id], onDelete: Cascade)
+  // Relations
+  claim         Claim     @relation(fields: [claimId], references: [id], onDelete: Cascade)
 
-  @@unique([claimId, voter])
+  @@unique([claimId, voterAddress])
+  @@index([voterAddress])
+  @@index([claimId])
   @@map("votes")
+}
+
+model Policy {
+  id                    String   @id
+  name                  String
+  description           String?
+  coverageAmount        String
+  premium               String
+  durationDays          Int
+  requiredVotes         Int      @default(5)
+  votingPeriodLedgers   Int      @default(720) // ~1 hour at 5 sec/ledger
+  votingDeadlineLedger  Int
+  votingDeadlineTime    DateTime
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Relations
+  claims                Claim[]
+
+  @@map("policies")
+}
+
+model IndexerState {
+  id              Int      @id @default(autoincrement())
+  lastLedger      Int
+  lastCursor      String?
+  updatedAt       DateTime @updatedAt
+
+  @@map("indexer_state")
 }
 
 enum ClaimStatus {
   PENDING
-  VOTING
   APPROVED
   REJECTED
-  SETTLED
 }
 
-// Future
-model Policy {
-  id   String @id @default(cuid())
-  // ...
-  claims Claim[]
-  @@map("policies")
+enum VoteType {
+  YES
+  NO
 }
 
 

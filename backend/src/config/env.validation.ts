@@ -14,5 +14,6 @@ export const validationSchema = Joi.object({
   JWT_SECRET: Joi.string().min(32).required(),
   ADMIN_TOKEN: Joi.string().required(),
   LOG_LEVEL: Joi.string().default('info').valid('error', 'warn', 'log', 'verbose', 'debug'),
+  CACHE_TTL_SECONDS: Joi.number().default(60).description('Cache TTL in seconds'),
 });
 
