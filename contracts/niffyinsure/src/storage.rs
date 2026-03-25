@@ -12,6 +12,8 @@ pub enum DataKey {
     Admin,
     PendingAdmin,
     Token,
+    /// Address where collected premiums are sent.
+    Treasury,
     PremiumTable,
     CalcAddress,
     AllowedAsset(Address),
@@ -108,7 +110,7 @@ pub fn set_multiplier_table(env: &Env, table: &MultiplierTable) {
 }
 
 pub fn get_multiplier_table(env: &Env) -> MultiplierTable {
-    env.storage().instance().get(&DataKey::PremiumTable).unwrap()
+    env.storage().instance().get(&DataKey::PremiumTable).expect("multiplier table missing")
 }
 
 // ── Allowed assets ────────────────────────────────────────────────────────────
