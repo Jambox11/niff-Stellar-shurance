@@ -1,8 +1,13 @@
-import dynamic from 'next/dynamic'
-import { Skeleton } from '@/components/ui/skeleton'
+"use client";
+
+import dynamic from "next/dynamic";
+import { Skeleton } from "@/components/ui/skeleton";
 
 const PolicyInitiation = dynamic(
-  () => import('@/components/policy/policy-initiation').then((m) => m.PolicyInitiation),
+  () =>
+    import("@/components/policy/policy-initiation").then(
+      (m) => m.PolicyInitiation,
+    ),
   {
     loading: () => (
       <div className="container mx-auto px-4 py-8 max-w-4xl">
@@ -13,9 +18,9 @@ const PolicyInitiation = dynamic(
       </div>
     ),
     ssr: false,
-  }
-)
+  },
+);
 
 export default function PolicyPage() {
-  return <PolicyInitiation />
+  return <PolicyInitiation />;
 }
