@@ -1,7 +1,14 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { inter, ibmPlexMono } from "@/lib/fonts";
+import { OfflineBanner } from "@/components/ui/offline-banner";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover", // enables safe-area-inset-* on notched devices
+};
 
 export const metadata: Metadata = {
   title: "NiffyInsur - Decentralized Insurance for Stellar Network",
@@ -66,6 +73,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="manifest" href="/site.webmanifest" />
       </head>
       <body className="font-sans">
+        <OfflineBanner />
         {children}
         <Toaster />
       </body>
