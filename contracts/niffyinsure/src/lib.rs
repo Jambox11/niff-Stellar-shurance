@@ -356,7 +356,13 @@ impl NiffyInsure {
     /// - `reason_code`: Audit code (1=accidental transfer, 2=test tokens, 3=airdrop, etc.)
     ///
     /// See SWEEP_RUNBOOK.md for operational guidance and legal requirements.
-    pub fn sweep_token(env: Env, asset: Address, recipient: Address, amount: i128, reason_code: u32) {
+    pub fn sweep_token(
+        env: Env,
+        asset: Address,
+        recipient: Address,
+        amount: i128,
+        reason_code: u32,
+    ) {
         admin::sweep_token(&env, asset, recipient, amount, reason_code);
     }
 

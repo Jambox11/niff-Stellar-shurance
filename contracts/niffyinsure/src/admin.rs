@@ -280,13 +280,7 @@ pub fn drain(env: &Env, recipient: Address, amount: i128) {
 /// - AdminError::AssetNotAllowlisted: asset not on allowlist
 /// - AdminError::SweepCapExceeded: amount > configured cap
 /// - AdminError::ProtectedBalanceViolation: sweep would leave insufficient funds for claims
-pub fn sweep_token(
-    env: &Env,
-    asset: Address,
-    recipient: Address,
-    amount: i128,
-    reason_code: u32,
-) {
+pub fn sweep_token(env: &Env, asset: Address, recipient: Address, amount: i128, reason_code: u32) {
     storage::bump_instance(env);
     let admin = require_admin(env);
 

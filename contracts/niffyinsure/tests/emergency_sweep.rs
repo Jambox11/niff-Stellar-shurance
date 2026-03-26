@@ -211,8 +211,13 @@ fn sweep_reverts_when_violating_protected_balance() {
         approve_votes: 10,
         reject_votes: 0,
         filed_at: 100,
+        appeal_open_deadline_ledger: 0,
+        appeals_count: 0,
+        appeal_deadline_ledger: 0,
+        appeal_approve_votes: 0,
+        appeal_reject_votes: 0,
     };
-    
+
     // Use env.as_contract to access storage from test context
     env.as_contract(&contract_id, || {
         env.storage()
@@ -268,8 +273,13 @@ fn sweep_ignores_paid_claims_in_protected_balance() {
         approve_votes: 10,
         reject_votes: 0,
         filed_at: 100,
+        appeal_open_deadline_ledger: 0,
+        appeals_count: 0,
+        appeal_deadline_ledger: 0,
+        appeal_approve_votes: 0,
+        appeal_reject_votes: 0,
     };
-    
+
     // Use env.as_contract to access storage from test context
     env.as_contract(&contract_id, || {
         env.storage()
@@ -300,7 +310,10 @@ fn sweep_emits_comprehensive_audit_event() {
     let events = env.events().all();
     // Just verify that events were emitted (detailed event structure testing would require
     // parsing the event data which is complex in Soroban tests)
-    assert!(events.len() > 0, "Expected at least one event to be emitted");
+    assert!(
+        !events.is_empty(),
+        "Expected at least one event to be emitted"
+    );
 }
 
 // ── Reason code tracking ──────────────────────────────────────────────────────
@@ -312,8 +325,8 @@ fn sweep_accepts_various_reason_codes() {
     mint(&env, &token, &contract_id, 10_000_000);
 
     // Test different reason codes
-    let codes = vec![1u32, 2u32, 3u32, 4u32, 100u32, 999u32];
-    for (_i, code) in codes.iter().enumerate() {
+    let codes = [1u32, 2u32, 3u32, 4u32, 100u32, 999u32];
+    for code in codes.iter() {
         let recipient = Address::generate(&env);
         client.sweep_token(&token, &recipient, &100_000, code);
         assert_eq!(balance(&env, &token, &recipient), 100_000);
