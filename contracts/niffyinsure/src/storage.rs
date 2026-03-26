@@ -41,6 +41,8 @@ pub enum DataKey {
     ClaimVoters(u64),
     /// Last ledger at which `holder` filed a claim (rate-limit anchor).
     LastClaimLedger(Address),
+    /// (claim_id, voter_address) -> VoteOption for appeal round; immutable after first write.
+    AppealVote(u64, Address),
 }
 
 // ── Instance bump ─────────────────────────────────────────────────────────────
@@ -456,19 +458,18 @@ pub fn get_last_claim_ledger(env: &Env, holder: &Address) -> Option<u32> {
         .get(&DataKey::LastClaimLedger(holder.clone()))
 }
 
-// ── Sweep cap (instance) ──────────────────────────────────────────────────────
+// ── Appeal vote (persistent) ──────────────────────────────────────────────────
 
-/// Set optional per-transaction cap for emergency sweep operations.
-/// None means no cap (unlimited sweep amount, subject to other constraints).
-pub fn set_sweep_cap(env: &Env, cap: Option<i128>) {
-    if let Some(c) = cap {
-        env.storage().instance().set(&DataKey::SweepCap, &c);
-    } else {
-        env.storage().instance().remove(&DataKey::SweepCap);
-    }
+pub fn set_appeal_vote(env: &Env, claim_id: u64, voter: &Address, vote: &VoteOption) {
+    let key = DataKey::AppealVote(claim_id, voter.clone());
+    env.storage().persistent().set(&key, vote);
+    env.storage()
+        .persistent()
+        .extend_ttl(&key, PERSISTENT_TTL_THRESHOLD, PERSISTENT_TTL_EXTEND_TO);
 }
 
-/// Get configured sweep cap (None if not set).
-pub fn get_sweep_cap(env: &Env) -> Option<i128> {
-    env.storage().instance().get(&DataKey::SweepCap)
+pub fn get_appeal_vote(env: &Env, claim_id: u64, voter: &Address) -> Option<VoteOption> {
+    env.storage()
+        .persistent()
+        .get(&DataKey::AppealVote(claim_id, voter.clone()))
 }
