@@ -40,6 +40,13 @@ struct AllowedAssetUpdated {
     pub allowed: bool,
 }
 
+#[contractevent(topics = ["niffyinsure", "voting_duration_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VotingDurationUpdated {
+    pub old_ledgers: u32,
+    pub new_ledgers: u32,
+}
+
 #[contractevent(topics = ["niffyinsure", "pause_toggled"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PauseToggled {
@@ -65,6 +72,7 @@ impl NiffyInsure {
         storage::set_token(&env, &token);
         storage::set_multiplier_table(&env, &premium::default_multiplier_table(&env));
         storage::set_allowed_asset(&env, &token, true);
+        storage::set_voting_duration_ledgers(&env, ledger::VOTE_WINDOW_LEDGERS);
         Ok(())
     }
 
@@ -135,6 +143,7 @@ impl NiffyInsure {
             40 => validate::Error::VotingWindowStillOpen,
             41 => validate::Error::NotEligibleVoter,
             42 => validate::Error::RateLimitExceeded,
+            49 => validate::Error::VotingDurationOutOfBounds,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -201,33 +210,31 @@ impl NiffyInsure {
         claim::get_claim(&env, claim_id)
     }
 
-    pub fn file_claim(
-        env: Env,
-        holder: Address,
-        policy_id: u32,
-        amount: i128,
-        details: String,
-        image_urls: Vec<String>,
-    ) -> u64 {
-        holder.require_auth();
-        claim::file_claim(&env, &holder, policy_id, amount, &details, &image_urls)
-            .unwrap_or_else(|e| panic_with_error!(&env, e))
+    /// Ledgers added at each claim filing to compute `voting_deadline_ledger` for that claim.
+    pub fn get_vote_duration_ledgers(env: Env) -> u32 {
+        storage::get_voting_duration_ledgers(&env)
     }
 
-    pub fn vote_on_claim(
+    /// Admin-only: set voting duration for **future** filings. Existing claims keep their stored deadline.
+    pub fn admin_set_vote_duration_ledgers(
         env: Env,
-        voter: Address,
-        claim_id: u64,
-        vote: types::VoteOption,
-    ) -> types::ClaimStatus {
-        voter.require_auth();
-        claim::vote_on_claim(&env, &voter, claim_id, &vote)
-            .unwrap_or_else(|e| panic_with_error!(&env, e))
-    }
-
-    pub fn finalize_claim(env: Env, claim_id: u64) -> types::ClaimStatus {
-        claim::finalize_claim(&env, claim_id)
-            .unwrap_or_else(|e| panic_with_error!(&env, e))
+        new_ledgers: u32,
+    ) -> Result<(), validate::Error> {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        ledger::validate_voting_duration_ledgers(new_ledgers)?;
+        storage::bump_instance(&env);
+        let old = storage::get_voting_duration_ledgers(&env);
+        if old == new_ledgers {
+            return Ok(());
+        }
+        storage::set_voting_duration_ledgers(&env, new_ledgers);
+        VotingDurationUpdated {
+            old_ledgers: old,
+            new_ledgers,
+        }
+        .publish(&env);
+        Ok(())
     }
 
     pub fn get_claim_counter(env: Env) -> u64 {
@@ -262,6 +269,7 @@ impl NiffyInsure {
                     amount: c.amount,
                     status: c.status,
                     filed_at: c.filed_at,
+                    voting_deadline_ledger: c.voting_deadline_ledger,
                 });
             }
             id = id.saturating_add(1);

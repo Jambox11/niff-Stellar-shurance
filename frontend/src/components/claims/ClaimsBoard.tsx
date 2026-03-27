@@ -12,6 +12,7 @@ import { useRealtimeTallies } from "@/lib/hooks/useRealtimeTallies";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { useQueryParamFilters } from "@/lib/hooks/useQueryParamFilters";
 import { useNotifications } from "@/lib/hooks/useNotifications";
+import { useLatestLedger } from "@/hooks/use-latest-ledger";
 import type { ClaimFilters, TallyUpdate } from "./types";
 import type { ClaimBoard } from "@/lib/schemas/claims-board";
 
@@ -101,6 +102,8 @@ export function ClaimsBoard() {
 
   useRealtimeTallies(claimIds, handleTallyUpdate);
 
+  const latestLedger = useLatestLedger();
+
   // ── Filter change resets page to 1 ───────────────────────────────────────
   const handleFiltersChange = useCallback(
     (newFilters: ClaimFilters) => {
@@ -181,7 +184,11 @@ export function ClaimsBoard() {
         )}
 
         {!loading && !error && localClaims.length > 0 && (
-          <ClaimList claims={localClaims} isAuthenticated={isAuthenticated} />
+          <ClaimList
+            claims={localClaims}
+            isAuthenticated={isAuthenticated}
+            currentLedger={latestLedger}
+          />
         )}
       </section>
 
