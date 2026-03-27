@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { Module, NestModule, MiddlewareConsumer, RequestMethod } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TerminusModule } from '@nestjs/terminus';
 import { ThrottlerModule } from '@nestjs/throttler';
@@ -19,6 +19,7 @@ import { TxModule } from './tx/tx.module';
 import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
 import { OracleHooksController } from './experimental/oracle-hooks.controller';
 import { BetaCalculatorsController } from './experimental/beta-calculators.controller';
+import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
 
 @Module({
   imports: [
@@ -49,4 +50,13 @@ import { BetaCalculatorsController } from './experimental/beta-calculators.contr
   ],
   controllers: [OracleHooksController, BetaCalculatorsController],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    consumer
+      .apply(IdempotencyMiddleware)
+      .forRoutes(
+        { path: 'ipfs/upload', method: RequestMethod.POST },
+        { path: 'tx/submit', method: RequestMethod.POST },
+      );
+  }
+}
