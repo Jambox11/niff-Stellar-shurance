@@ -192,6 +192,22 @@ pub enum TerminationReason {
 /// never panics or skips records.
 pub const PAGE_SIZE_MAX: u32 = 20;
 
+/// Maximum `(holder, policy_id)` pairs in a single `get_policies_batch` call.
+///
+/// Intentionally equals [`PAGE_SIZE_MAX`]: each lookup is a separate storage read, so
+/// allowing unbounded batches would risk instruction-meter exhaustion during RPC
+/// simulation and unfair resource use. Unlike `list_policies` (which silently clamps
+/// `limit`), an over-cap batch **reverts** so callers chunk explicitly.
+pub const POLICY_BATCH_GET_MAX: u32 = PAGE_SIZE_MAX;
+
+/// Key for batched policy reads (`get_policies_batch`).
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PolicyLookupKey {
+    pub holder: Address,
+    pub policy_id: u32,
+}
+
 /// Lightweight policy summary returned by `list_policies`.
 ///
 /// Omits large or rarely-needed fields (`details`, `image_urls`, etc.) to keep

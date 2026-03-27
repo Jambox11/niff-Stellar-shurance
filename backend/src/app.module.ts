@@ -16,6 +16,7 @@ import { QuoteModule } from './quote/quote.module';
 import { PolicyModule } from './policy/policy.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { TxModule } from './tx/tx.module';
+import { ChainModule } from './chain/chain.module';
 import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { RequestContextMiddleware } from './common/middleware/request-context.middleware';
@@ -49,6 +50,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
     PolicyModule,
     NotificationsModule,
     TxModule,
+    ChainModule,
     FeatureFlagsModule,
     MetricsModule,
   ],

@@ -65,6 +65,8 @@ pub enum Error {
     AppealNotOpen = 47,
     /// Appeal voting window is still open; cannot finalize appeal yet.
     AppealWindowStillOpen = 48,
+    /// `get_policies_batch` received more than [`crate::types::POLICY_BATCH_GET_MAX`] keys.
+    PolicyBatchTooLarge = 49,
 }
 
 pub fn check_policy(policy: &Policy) -> Result<(), Error> {
