@@ -61,7 +61,7 @@ describe('Feature Flags (integration)', () => {
     await app.init();
   }
 
-  function contextFor(handler: Function, klass: Function, path: string): ExecutionContext {
+  function contextFor(handler: (...args: unknown[]) => unknown, klass: abstract new (...args: unknown[]) => unknown, path: string): ExecutionContext {
     return {
       getHandler: () => handler,
       getClass: () => klass,
