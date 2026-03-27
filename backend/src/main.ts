@@ -5,8 +5,8 @@ import { AppModule } from "./app.module";
 import { HttpExceptionFilter } from "./common/filters/http-exception.filter";
 import helmet from "helmet";
 import { ConfigService } from "@nestjs/config";
-import { RequestContextMiddleware } from "./common/middleware/request-context.middleware";
-import { AppLoggerService } from "./common/logger/app-logger.service";
+import { LoggerMiddleware } from "./common/middleware/logger.middleware";
+import type { Request, Response, NextFunction } from "express";
 
 export function parseOrigins(raw: string): string[] {
   return raw
@@ -41,7 +41,7 @@ async function bootstrap() {
     }),
   );
   // Permissions-Policy — helmet 7 does not include a built-in helper
-  app.use((_req: any, res: any, next: any) => {
+  app.use((_req: Request, res: Response, next: NextFunction) => {
     res.setHeader(
       "Permissions-Policy",
       "camera=(), microphone=(), geolocation=()",
