@@ -3,6 +3,8 @@
 import { Button } from '@/components/ui/button'
 import { ArrowRight, Rocket, Star } from 'lucide-react'
 import Link from 'next/link'
+import { Suspense } from 'react'
+import { RampSection } from '@/components/ramp/ramp-section'
 
 export function CTA() {
   return (
@@ -30,6 +32,9 @@ export function CTA() {
                 View Documentation
               </Link>
             </Button>
+            <Suspense>
+              <RampSection />
+            </Suspense>
           </div>
 
           <div className="bg-white/10 backdrop-blur-sm rounded-lg p-8 max-w-3xl mx-auto">

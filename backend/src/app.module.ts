@@ -17,6 +17,7 @@ import { PolicyModule } from './policy/policy.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { TxModule } from './tx/tx.module';
 import { FeatureFlagsModule } from './feature-flags/feature-flags.module';
+import { RampModule } from './ramp/ramp.module';
 import { OracleHooksController } from './experimental/oracle-hooks.controller';
 import { BetaCalculatorsController } from './experimental/beta-calculators.controller';
 
@@ -46,6 +47,7 @@ import { BetaCalculatorsController } from './experimental/beta-calculators.contr
     NotificationsModule,
     TxModule,
     FeatureFlagsModule,
+    RampModule,
   ],
   controllers: [OracleHooksController, BetaCalculatorsController],
 })
