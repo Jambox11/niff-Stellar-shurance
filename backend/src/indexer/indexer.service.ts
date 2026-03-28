@@ -141,8 +141,6 @@ export class IndexerService {
     const dataNative = scValToNative(event.value) as EventPayload;
     const contractId = event.contractId?.toString() ?? '';
 
-    const parsed = parseEvent(topics, dataNative, event.ledger, txHash);
-
     await this.prisma.$transaction(async (tx) => {
       // Idempotent raw-event store — unique constraint on (txHash, eventIndex).
       await tx.rawEvent.upsert({
@@ -169,11 +167,17 @@ export class IndexerService {
         await this.handlePolicyInitiated(tx, dataNative, event);
       } else if (mainTopic === 'policy' && subTopic === 'renewed') {
         await this.handlePolicyRenewed(tx, dataNative);
-      } else if (mainTopic === 'claim' && subTopic === 'filed') {
+      } else if (
+        (mainTopic === 'claim' && subTopic === 'filed') ||
+        (mainTopic === 'niffyinsure' && subTopic === 'claim_filed')
+      ) {
         await this.handleClaimFiled(tx, dataNative, event);
       } else if (mainTopic === 'vote') {
-        await this.handleVoteCast(tx, topics, dataNative, event);
-      } else if (mainTopic === 'claim_pd') {
+        await this.handleVoteCast(tx, topics, dataNative as EventPayload, event);
+      } else if (
+        mainTopic === 'claim_pd' ||
+        (mainTopic === 'niffyinsure' && subTopic === 'claim_paid')
+      ) {
         await this.handleClaimProcessed(tx, dataNative, event);
       }
     });
@@ -221,20 +225,20 @@ export class IndexerService {
 
   private async handleClaimFiled(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
     const claimId = getNumberValue(data.claim_id);
-    const id = `${getStringValue(data.claimant)}:${getNumberValue(data.policy_id)}`;
-
-  private async handleClaimFiled(tx: any, data: ClaimFiledEvent, ids: unknown[], event: any) {
-    // ids[0] = claim_id (u64), ids[1] = holder (Address)
-    const claimId = Number(ids[0]);
-    const holder = String(ids[1]);
-    const policyDbId = `${holder}:${data.policy_id}`;
+    const holder = getStringValue(data.holder ?? data.claimant);
+    const policyId = getNumberValue(data.policy_id);
+    const policyDbId = `${holder}:${policyId}`;
+    const grossAmount =
+      data.claim_amount !== undefined && data.claim_amount !== null
+        ? getStringValue(data.claim_amount)
+        : getStringValue(data.amount);
     await tx.claim.upsert({
       where: { id: claimId },
       create: {
         id: claimId,
-        policyId: id,
-        creatorAddress: getStringValue(data.claimant),
-        amount: getStringValue(data.amount),
+        policyId: policyDbId,
+        creatorAddress: holder,
+        amount: grossAmount,
         asset: getStringValue(data.asset),
         description: getStringValue(data.details),
         imageUrls: getStringArray(data.image_urls),
@@ -245,23 +249,22 @@ export class IndexerService {
         txHash: event.txHash,
       },
       update: {
-        // Already exists from previous vote or processing (shouldn't happen with correct order but handle it)
-        amount: getStringValue(data.amount),
+        amount: grossAmount,
         description: getStringValue(data.details),
         imageUrls: getStringArray(data.image_urls),
-      }
+      },
     });
   }
 
   private async handleVoteCast(
     tx: IndexerTx,
     topics: StellarNativeValue[],
-    data: StellarNativeValue,
+    data: EventPayload,
     event: SorobanEvent,
   ) {
     const claimId = Number(topics[1]);
     const voter = topics[2]?.toString();
-    const option = getStringValue(data); // VoteOption enum: "Approve" or "Reject"
+    const option = getStringValue(data.vote ?? data); // VoteOption enum: "Approve" or "Reject"
 
     if (!voter) {
       this.logger.warn(`Skipping vote event for claim ${claimId}: missing voter topic`);
@@ -283,19 +286,9 @@ export class IndexerService {
     });
     await tx.claim.update({
       where: { id: claimId },
-      data: { approveVotes: data.approve_votes, rejectVotes: data.reject_votes },
-    });
-  }
-
-  private async handleClaimFinalized(tx: any, data: ClaimFinalizedEvent, ids: unknown[]) {
-    const claimId = Number(ids[0]);
-    await tx.claim.update({
-      where: { id: claimId },
       data: {
-        status: data.status === 'Approved' ? 'APPROVED' : 'REJECTED',
-        approveVotes: data.approve_votes,
-        rejectVotes: data.reject_votes,
-        updatedAtLedger: data.at_ledger,
+        approveVotes: getNumberValue(data.approve_votes),
+        rejectVotes: getNumberValue(data.reject_votes),
       },
     });
   }

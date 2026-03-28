@@ -26,7 +26,7 @@ use soroban_sdk::{contract, contractevent, contractimpl, panic_with_error, Addre
 #[contract]
 pub struct NiffyInsure;
 pub use admin::AdminError;
-pub use policy::RenewalError;
+pub use policy::{PolicyError, RenewalError};
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[soroban_sdk::contracterror]
@@ -302,6 +302,7 @@ impl NiffyInsure {
                     claim_id: c.claim_id,
                     policy_id: c.policy_id,
                     amount: c.amount,
+                    deductible: c.deductible,
                     status: c.status,
                     filed_at: c.filed_at,
                     voting_deadline_ledger: c.voting_deadline_ledger,
@@ -371,6 +372,7 @@ impl NiffyInsure {
         base_amount: i128,
         asset: Address,
         beneficiary: Option<Address>,
+        deductible: Option<i128>,
     ) -> Result<types::Policy, policy::PolicyError> {
         policy::initiate_policy(
             &env,
@@ -383,6 +385,7 @@ impl NiffyInsure {
             base_amount,
             asset,
             beneficiary,
+            deductible,
         )
     }
 
@@ -714,6 +717,7 @@ impl NiffyInsure {
             start_ledger: 1,
             end_ledger,
             asset: token,
+            deductible: None,
             beneficiary: None,
             terminated_at_ledger: 0,
             termination_reason: TerminationReason::None,
