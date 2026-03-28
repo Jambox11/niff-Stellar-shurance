@@ -266,6 +266,7 @@ fn claim_payout_uses_policy_bound_asset() {
         appeal_deadline_ledger: 0,
         appeal_approve_votes: 0,
         appeal_reject_votes: 0,
+        status_history: Vec::new(&t.env),
     };
     t.env.as_contract(&t.contract_id, || {
         niffyinsure::storage::set_claim(&t.env, &claim);
@@ -325,6 +326,7 @@ fn claim_with_disallowed_bound_asset_is_rejected() {
         appeal_deadline_ledger: 0,
         appeal_approve_votes: 0,
         appeal_reject_votes: 0,
+        status_history: Vec::new(&t.env),
     };
     t.env.as_contract(&t.contract_id, || {
         niffyinsure::storage::set_claim(&t.env, &claim);
