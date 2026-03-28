@@ -284,6 +284,7 @@ impl NiffyInsure {
         safety_score: u32,
         base_amount: i128,
         asset: Address,
+        beneficiary: Option<Address>,
     ) -> Result<types::Policy, policy::PolicyError> {
         policy::initiate_policy(
             &env,
@@ -295,7 +296,18 @@ impl NiffyInsure {
             safety_score,
             base_amount,
             asset,
+            beneficiary,
         )
+    }
+
+    /// Set or clear the payout beneficiary. Holder-authenticated only.
+    pub fn set_beneficiary(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+        beneficiary: Option<Address>,
+    ) -> Result<(), policy::PolicyError> {
+        policy::set_beneficiary(&env, holder, policy_id, beneficiary)
     }
 
     /// Read-only: retrieve a persisted policy by (holder, policy_id).
@@ -616,6 +628,7 @@ impl NiffyInsure {
             start_ledger: 1,
             end_ledger,
             asset: token,
+            beneficiary: None,
             terminated_at_ledger: 0,
             termination_reason: TerminationReason::None,
             terminated_by_admin: false,

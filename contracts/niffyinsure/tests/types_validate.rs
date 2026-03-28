@@ -21,6 +21,7 @@ fn dummy_policy(env: &Env, start: u32, end: u32, coverage: i128, active: bool) -
         start_ledger: start,
         end_ledger: end,
         asset: Address::generate(env),
+        beneficiary: None,
         terminated_at_ledger: 0,
         termination_reason: TerminationReason::None,
         terminated_by_admin: false,

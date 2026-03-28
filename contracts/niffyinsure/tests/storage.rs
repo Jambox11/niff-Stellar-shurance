@@ -41,6 +41,7 @@ fn make_policy(holder: &Address, policy_id: u32, asset: &Address) -> Policy {
         start_ledger: 0,
         end_ledger: 9_999_999,
         asset: asset.clone(),
+        beneficiary: None,
         terminated_at_ledger: 0,
         termination_reason: TerminationReason::None,
         terminated_by_admin: false,

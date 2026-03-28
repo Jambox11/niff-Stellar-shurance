@@ -66,6 +66,7 @@ fn initiate(t: &TestEnv, holder: &Address, asset: &Address) -> niffyinsure::type
         &5u32,
         &1_000_000_000i128,
         asset,
+        &None,
     )
 }
 
@@ -104,6 +105,7 @@ fn initiate_policy_rejects_non_allowlisted_asset() {
         &3u32,
         &500_000_000i128,
         &token_b,
+        &None,
     );
     assert!(result.is_err(), "expected AssetNotAllowed error");
 }
@@ -380,6 +382,7 @@ fn removing_asset_from_allowlist_blocks_new_policies() {
         &5u32,
         &1_000_000_000i128,
         &token_b,
+        &None,
     );
     assert!(result.is_err(), "expected AssetNotAllowed after removal");
 }
