@@ -3,7 +3,7 @@
 #![cfg(test)]
 
 use niffyinsure::{
-    types::{AgeBand, Claim, ClaimStatus, CoverageType, PolicyType, RegionTier},
+    types::{AgeBand, Claim, ClaimStatus, CoverageTier, PolicyType, RegionTier},
     NiffyInsureClient,
 };
 use soroban_sdk::{
@@ -58,7 +58,7 @@ fn initiate(
         &PolicyType::Auto,
         &RegionTier::Low,
         &AgeBand::Adult,
-        &CoverageType::Standard,
+        &CoverageTier::Standard,
         &10u32,
         &1_000_000_000i128,
         token_addr,

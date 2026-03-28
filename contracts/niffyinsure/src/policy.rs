@@ -1,6 +1,6 @@
 use crate::{
     ledger, premium, storage, token,
-    types::{AgeBand, CoverageType, Policy, PolicyType, PremiumQuote, RegionTier, RiskInput},
+    types::{AgeBand, CoverageTier, Policy, PolicyType, PremiumQuote, RegionTier, RiskInput},
     validate::{self, Error},
 };
 use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env, String};
@@ -95,7 +95,7 @@ pub fn generate_premium(
     env: &Env,
     region: RegionTier,
     age_band: AgeBand,
-    coverage_type: CoverageType,
+    coverage_type: CoverageTier,
     safety_score: u32,
     base_amount: i128,
     include_breakdown: bool,
@@ -220,7 +220,7 @@ pub fn initiate_policy(
     policy_type: PolicyType,
     region: RegionTier,
     age_band: AgeBand,
-    coverage_type: CoverageType,
+    coverage_type: CoverageTier,
     safety_score: u32,
     base_amount: i128,
     asset: Address,

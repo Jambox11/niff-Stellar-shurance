@@ -280,7 +280,7 @@ impl NiffyInsure {
         policy_type: types::PolicyType,
         region: types::RegionTier,
         age_band: types::AgeBand,
-        coverage_type: types::CoverageType,
+        coverage_type: types::CoverageTier,
         safety_score: u32,
         base_amount: i128,
         asset: Address,

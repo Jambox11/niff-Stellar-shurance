@@ -4,7 +4,7 @@
 
 use niffyinsure::{
     types::{
-        AgeBand, ClaimStatus, CoverageType, PolicyType, RegionTier, VoteOption,
+        AgeBand, ClaimStatus, CoverageTier, PolicyType, RegionTier, VoteOption,
         VOTE_WINDOW_LEDGERS,
     },
     NiffyInsureClient,
@@ -67,7 +67,7 @@ fn status_history_order_matches_transitions_and_get_claim_history() {
         &PolicyType::Auto,
         &RegionTier::Medium,
         &AgeBand::Adult,
-        &CoverageType::Standard,
+        &CoverageTier::Standard,
         &80,
         &1_000_000,
         &token,
@@ -144,7 +144,7 @@ fn status_history_finalize_reject_sequence() {
         &PolicyType::Auto,
         &RegionTier::Medium,
         &AgeBand::Adult,
-        &CoverageType::Standard,
+        &CoverageTier::Standard,
         &80,
         &1_000_000,
         &token,
