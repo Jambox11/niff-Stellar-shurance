@@ -60,9 +60,9 @@ export function VoteTally({ claim, currentLedger, loading }: VoteTallyProps) {
   const rejectPct = total > 0 ? Math.round((rejectCount / total) * 100) : 0
   const majority = Math.floor(total / 2) + 1
 
-  const voteOpen = isVoteOpen(claim.filed_at, currentLedger)
+  const voteOpen = isVoteOpen(claim.voting_deadline_ledger, currentLedger)
   const terminal = isTerminal(claim.status)
-  const msLeft = deadlineMs(claim.filed_at, currentLedger)
+  const msLeft = deadlineMs(claim.voting_deadline_ledger, currentLedger)
   const countdown = useCountdown(voteOpen && !terminal ? msLeft : 0)
 
   if (loading) {

@@ -42,6 +42,13 @@ struct AllowedAssetUpdated {
     pub allowed: bool,
 }
 
+#[contractevent(topics = ["niffyinsure", "voting_duration_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VotingDurationUpdated {
+    pub old_ledgers: u32,
+    pub new_ledgers: u32,
+}
+
 #[contractevent(topics = ["niffyinsure", "pause_toggled"])]
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct PauseToggled {
@@ -67,6 +74,7 @@ impl NiffyInsure {
         storage::set_token(&env, &token);
         storage::set_multiplier_table(&env, &premium::default_multiplier_table(&env));
         storage::set_allowed_asset(&env, &token, true);
+        storage::set_voting_duration_ledgers(&env, ledger::VOTE_WINDOW_LEDGERS);
         Ok(())
     }
 
@@ -137,6 +145,7 @@ impl NiffyInsure {
             40 => validate::Error::VotingWindowStillOpen,
             41 => validate::Error::NotEligibleVoter,
             42 => validate::Error::RateLimitExceeded,
+            49 => validate::Error::VotingDurationOutOfBounds,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -235,6 +244,7 @@ impl NiffyInsure {
                     amount: c.amount,
                     status: c.status,
                     filed_at: c.filed_at,
+                    voting_deadline_ledger: c.voting_deadline_ledger,
                 });
             }
             id = id.saturating_add(1);

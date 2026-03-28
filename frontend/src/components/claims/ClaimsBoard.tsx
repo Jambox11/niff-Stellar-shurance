@@ -104,6 +104,8 @@ export function ClaimsBoard() {
 
   useRealtimeTallies(claimIds, handleTallyUpdate);
 
+  const latestLedger = useLatestLedger();
+
   // ── Filter change resets page to 1 ───────────────────────────────────────
   const handleFiltersChange = useCallback(
     (newFilters: ClaimFilters) => {
@@ -184,7 +186,11 @@ export function ClaimsBoard() {
         )}
 
         {!loading && !error && localClaims.length > 0 && (
-          <ClaimList claims={localClaims} isAuthenticated={isAuthenticated} />
+          <ClaimList
+            claims={localClaims}
+            isAuthenticated={isAuthenticated}
+            currentLedger={latestLedger}
+          />
         )}
       </section>
 
