@@ -21,7 +21,7 @@ mod oracle;
 #[cfg(feature = "experimental")]
 pub use oracle::*;
 
-use soroban_sdk::{contract, contractevent, contractimpl, Address, Env, Vec};
+use soroban_sdk::{contract, contractevent, contractimpl, panic_with_error, Address, Env, Vec};
 
 #[contract]
 pub struct NiffyInsure;
@@ -182,32 +182,6 @@ impl NiffyInsure {
         claim::process_claim(&env, claim_id)
     }
 
-    pub fn file_claim(
-        env: Env,
-        holder: Address,
-        policy_id: u32,
-        amount: i128,
-        details: soroban_sdk::String,
-        image_urls: Vec<soroban_sdk::String>,
-    ) -> Result<u64, validate::Error> {
-        holder.require_auth();
-        claim::file_claim(&env, &holder, policy_id, amount, &details, &image_urls)
-    }
-
-    pub fn vote_on_claim(
-        env: Env,
-        voter: Address,
-        claim_id: u64,
-        vote: types::VoteOption,
-    ) -> Result<types::ClaimStatus, validate::Error> {
-        voter.require_auth();
-        claim::vote_on_claim(&env, &voter, claim_id, &vote)
-    }
-
-    pub fn finalize_claim(env: Env, claim_id: u64) -> Result<types::ClaimStatus, validate::Error> {
-        claim::finalize_claim(&env, claim_id)
-    }
-
     pub fn get_claim(env: Env, claim_id: u64) -> Result<types::Claim, validate::Error> {
         claim::get_claim(&env, claim_id)
     }
@@ -327,6 +301,35 @@ impl NiffyInsure {
     /// Read-only: retrieve a persisted policy by (holder, policy_id).
     pub fn get_policy(env: Env, holder: Address, policy_id: u32) -> Option<types::Policy> {
         storage::get_policy(&env, &holder, policy_id)
+    }
+
+    /// Batch-read policies in one simulation/RPC round-trip.
+    ///
+    /// Returns `Vec` aligned with `ids`: `out[i]` is `Some(policy)` or `None` if that
+    /// key is missing — absent keys never revert the whole batch.
+    ///
+    /// # Hard cap — **`POLICY_BATCH_GET_MAX` (20)**
+    ///
+    /// Matches [`types::PAGE_SIZE_MAX`]: each entry is an independent storage read, so
+    /// large batches multiply metered reads and can exceed the default Soroban
+    /// instruction budget during simulation. Dashboards and indexers must chunk
+    /// requests. **More than 20 keys reverts** with [`validate::Error::PolicyBatchTooLarge`]
+    /// (unlike `list_policies`, which clamps `limit` instead of erroring).
+    ///
+    /// The cap is checked **before** any policy storage access (no unbounded iteration).
+    pub fn get_policies_batch(
+        env: Env,
+        ids: Vec<types::PolicyLookupKey>,
+    ) -> Vec<Option<types::Policy>> {
+        if ids.len() > types::POLICY_BATCH_GET_MAX {
+            panic_with_error!(&env, validate::Error::PolicyBatchTooLarge);
+        }
+        let mut out: Vec<Option<types::Policy>> = Vec::new(&env);
+        for i in 0..ids.len() {
+            let key = ids.get(i).unwrap();
+            out.push_back(storage::get_policy(&env, &key.holder, key.policy_id));
+        }
+        out
     }
 
     /// Paginated listing of a holder's policies, ordered by ascending policy_id.
