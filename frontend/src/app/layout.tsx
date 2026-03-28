@@ -1,7 +1,16 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
+
 import "./globals.css";
+import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/toaster";
 import { inter, ibmPlexMono } from "@/lib/fonts";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover", // enables safe-area-inset-* on notched devices
+};
 
 export const metadata: Metadata = {
   title: "NiffyInsur - Decentralized Insurance for Stellar Network",
@@ -57,17 +66,27 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Read the nonce injected by middleware.ts so Next.js inline scripts
+  // (chunk loader, __NEXT_DATA__) satisfy the nonce-based CSP.
+  const nonce = (await headers()).get('x-nonce') ?? undefined
+
   return (
     <html lang="en" className={`${inter.variable} ${ibmPlexMono.variable}`}>
-      <head>
+      <head nonce={nonce}>
         <link rel="icon" href="/favicon.ico" />
         <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <link rel="manifest" href="/site.webmanifest" />
+        <AnalyticsScript nonce={nonce} />
       </head>
-      <body className="font-sans">
-        {children}
-        <Toaster />
+      <body className="font-sans antialiased">
+        <ThemeProvider defaultTheme="system" storageKey="niffyinsur-theme">
+          <WalletProvider>
+            {children}
+            <NetworkMismatchModal />
+            <Toaster />
+          </WalletProvider>
+        </ThemeProvider>
       </body>
     </html>
   );

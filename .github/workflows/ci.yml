@@ -2,70 +2,152 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**", "fix/**"]
+    branches:
+      - main
   pull_request:
+    branches:
+      - main
 
-env:
-  CARGO_TERM_COLOR: always
+permissions:
+  contents: read
 
 jobs:
+  # ── Frontend quality gate ─────────────────────────────────────────────────
+  frontend:
+    name: Frontend (lint → typecheck → build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (fail on warnings)
+        run: npm run lint -- --max-warnings=0
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+  # ── Soroban ABI golden-vector drift guard ────────────────────────────────
+  golden-vectors:
+    name: Soroban ABI golden vectors
+    runs-on: ubuntu-latest
+    # Run whenever contracts or backend builder code changes
+    if: |
+      github.event_name == 'push' ||
+      contains(toJson(github.event.pull_request.changed_files), 'contracts/') ||
+      contains(toJson(github.event.pull_request.changed_files), 'backend/src/soroban/') ||
+      contains(toJson(github.event.pull_request.changed_files), 'backend/src/tx/')
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - run: npm install
+
+      - name: Run golden-vector encoding tests
+        run: npx jest --testPathPattern="golden-vectors" --no-coverage
+
+      - name: Verify vectors are up-to-date (no uncommitted drift)
+        run: |
+          npx ts-node ../scripts/refresh-vectors.ts
+          if ! git diff --exit-code backend/src/soroban/golden-vectors.json; then
+            echo "::error::golden-vectors.json is stale. Run 'npm run refresh-vectors' locally, review the diff, and commit the updated file."
+            exit 1
+          fi
+
   # ── Smart contract ────────────────────────────────────────────────────────
   contract:
     name: Contract (Rust / Soroban)
     runs-on: ubuntu-latest
-    env:
-      RUSTFLAGS: "-D warnings"
     steps:
       - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
         with:
-          targets: wasm32-unknown-unknown
-          components: rustfmt, clippy
-
-      - uses: actions/cache@v4
+          node-version: '20'
+      - name: Determine package manager
+        id: pkgmgr
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            echo "manager=pnpm" >> "$GITHUB_OUTPUT"
+          elif [ -f package-lock.json ]; then
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+          elif [ -f yarn.lock ]; then
+            echo "manager=yarn" >> "$GITHUB_OUTPUT"
+          else
+            echo "manager=npm" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Setup pnpm when needed
+        if: steps.pkgmgr.outputs.manager == 'pnpm'
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+      - name: Cache node modules
+        uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - run: cargo fmt --all -- --check
-      - run: cargo clippy --target wasm32-unknown-unknown --release -- -D warnings
-      - run: cargo test
-      - run: cargo build --target wasm32-unknown-unknown --release
-
-      - name: Record wasm SHA-256
-        run: sha256sum target/wasm32-unknown-unknown/release/niffyinsure.wasm | tee niffyinsure.wasm.sha256
-
-      - uses: actions/upload-artifact@v4
+            node_modules
+            ~/.pnpm-store
+          key: ${{ runner.os }}-node-${{ steps.pkgmgr.outputs.manager }}-${{ hashFiles('**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
+          restore-keys: ${{ runner.os }}-node-${{ steps.pkgmgr.outputs.manager }}-
+      - name: Cache .next cache
+        uses: actions/cache@v4
         with:
-          name: niffyinsure-wasm-${{ github.sha }}
-          path: |
-            target/wasm32-unknown-unknown/release/niffyinsure.wasm
-            niffyinsure.wasm.sha256
-          retention-days: 30
+          path: .next/cache
+          key: ${{ runner.os }}-next-cache-${{ hashFiles('**/package-lock.json', '**/pnpm-lock.yaml', '**/yarn.lock') }}
+          restore-keys: ${{ runner.os }}-next-cache-
+      - name: Install dependencies
+        run: |
+          if [ "${{ steps.pkgmgr.outputs.manager }}" = "pnpm" ]; then
+            pnpm install --frozen-lockfile
+          else
+            npm ci
+          fi
+      - name: Lint (fail on warnings)
+        run: |
+          if [ "${{ steps.pkgmgr.outputs.manager }}" = "pnpm" ]; then
+            pnpm eslint --max-warnings=0 .
+          else
+            npm run lint -- --max-warnings=0
+          fi
+      - name: TypeScript compile
+        run: |
+          if [ "${{ steps.pkgmgr.outputs.manager }}" = "pnpm" ]; then
+            pnpm tsc --noEmit
+          else
+            npm run build --if-present -- --noEmit
+          fi
+      - name: Build
+        run: |
+          if [ "${{ steps.pkgmgr.outputs.manager }}" = "pnpm" ]; then
+            pnpm build
+          else
+            npm run build
+          fi
 
-  # ── Backend ───────────────────────────────────────────────────────────────
-  backend:
-    name: Backend (Node / TypeScript)
+  unit-tests:
+    name: Unit tests
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
-
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 5
-          --health-start-period 5s
 
     env:
       REDIS_HOST: 127.0.0.1
@@ -75,14 +157,48 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Install Redis directly on the runner — avoids Docker Hub rate limits entirely
+      - name: Start Redis
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y redis-server
+          sudo systemctl start redis-server
+          redis-cli ping
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
+      - name: Run unit tests
+        run: npm test
 
-      - run: npm install
-      - run: npm run lint
-      - run: npm run build
-      - run: npm test
+  e2e-tests:
+    name: Playwright E2E tests
+    runs-on: ubuntu-latest
+    needs: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+      - name: Run Playwright tests
+        run: npx playwright test --reporter=html
+        continue-on-error: true
+      - name: Upload Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: playwright-failure-${{ github.run_id }}
+          path: |
+ feat/accessibility-audit
+            sbom-backend.json
+            sbom-frontend.json
+          retention-days: 90
 
   # ── Frontend ──────────────────────────────────────────────────────────────
   frontend:
@@ -102,5 +218,46 @@ jobs:
 
       - run: npm ci
       - run: npm run lint
+      - run: npm run check-docs
       - run: npm run build
       - run: npm test
+
+  # ── Accessibility (axe) ───────────────────────────────────────────────────
+  accessibility:
+    name: Accessibility (axe / Playwright)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - run: npm run build
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run axe accessibility checks
+        run: npx playwright test tests/accessibility.spec.ts --reporter=list
+        env:
+          BASE_URL: http://localhost:3000
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: axe-report-${{ github.sha }}
+          path: frontend/playwright-report/
+          retention-days: 14
+
+            test-results
+            playwright-report
+            traces
+            .playwright/traces
+

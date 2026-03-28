@@ -1,13 +1,9 @@
-﻿use crate::{
-    calculator,
-    ledger,
-    premium,
-    storage,
-    token,
+use crate::{
+    ledger, premium, storage, token,
     types::{AgeBand, CoverageType, Policy, PolicyType, PremiumQuote, RegionTier, RiskInput},
     validate::{self, Error},
 };
-use soroban_sdk::{contractevent, contracterror, contracttype, symbol_short, Address, Env, String};
+use soroban_sdk::{contracterror, contractevent, contracttype, Address, Env, String};
 
 pub use ledger::QUOTE_TTL_LEDGERS;
 
@@ -70,12 +66,26 @@ pub struct PolicyInitiated {
     pub end_ledger: u32,
 }
 
+/// Emitted when the payout beneficiary is set or changed (including at policy initiation when non-empty).
+#[contractevent]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BeneficiaryUpdated {
+    #[topic]
+    pub holder: Address,
+    #[topic]
+    pub policy_id: u32,
+    pub old_beneficiary: Option<Address>,
+    pub new_beneficiary: Option<Address>,
+}
+
 /// Event emitted by `renew_policy`.
 #[contractevent]
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub struct PolicyRenewed {
     #[topic]
     pub holder: Address,
+    pub version: u32,
     pub policy_id: u32,
     pub premium: i128,
     pub new_end_ledger: u32,
@@ -127,14 +137,26 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
     let message = match err {
         Error::InvalidBaseAmount => "invalid base amount: expected > 0",
         Error::SafetyScoreOutOfRange => "invalid safety_score: expected 0..=100",
-        Error::InvalidConfigVersion => "invalid premium table version: expected a strictly newer version",
+        Error::InvalidConfigVersion => {
+            "invalid premium table version: expected a strictly newer version"
+        }
         Error::MissingRegionMultiplier => "premium table missing one or more region multipliers",
         Error::MissingAgeMultiplier => "premium table missing one or more age-band multipliers",
-        Error::MissingCoverageMultiplier => "premium table missing one or more coverage multipliers",
-        Error::RegionMultiplierOutOfBounds => "region multiplier out of bounds: expected 0.5000x..=5.0000x",
-        Error::AgeMultiplierOutOfBounds => "age-band multiplier out of bounds: expected 0.5000x..=5.0000x",
-        Error::CoverageMultiplierOutOfBounds => "coverage multiplier out of bounds: expected 0.5000x..=5.0000x",
-        Error::SafetyDiscountOutOfBounds => "safety discount out of bounds: expected 0.0000x..=0.5000x",
+        Error::MissingCoverageMultiplier => {
+            "premium table missing one or more coverage multipliers"
+        }
+        Error::RegionMultiplierOutOfBounds => {
+            "region multiplier out of bounds: expected 0.5000x..=5.0000x"
+        }
+        Error::AgeMultiplierOutOfBounds => {
+            "age-band multiplier out of bounds: expected 0.5000x..=5.0000x"
+        }
+        Error::CoverageMultiplierOutOfBounds => {
+            "coverage multiplier out of bounds: expected 0.5000x..=5.0000x"
+        }
+        Error::SafetyDiscountOutOfBounds => {
+            "safety discount out of bounds: expected 0.0000x..=0.5000x"
+        }
         Error::Overflow => "pricing arithmetic overflow: reduce base amount or multiplier values",
         Error::DivideByZero => "pricing divide by zero: check configured scaling factors",
         Error::InvalidQuoteTtl => "quote ttl misconfigured: contact support",
@@ -144,13 +166,18 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::InsufficientTreasury => "treasury balance is insufficient for the approved payout",
         Error::AlreadyPaid => "claim payout already executed",
         Error::ClaimNotApproved => "claim must be approved before payout",
+        Error::DuplicateOpenClaim => "an open claim already exists for this policy",
         Error::ZeroCoverage => "policy coverage must be greater than zero",
         Error::ZeroPremium => "policy premium must be greater than zero",
-        Error::InvalidLedgerWindow => "invalid ledger window: end_ledger must be greater than start_ledger",
+        Error::InvalidLedgerWindow => {
+            "invalid ledger window: end_ledger must be greater than start_ledger"
+        }
         Error::PolicyExpired => "policy is expired",
         Error::PolicyInactive => "policy is inactive",
         Error::ClaimAmountZero => "claim amount must be greater than zero",
         Error::ClaimExceedsCoverage => "claim amount exceeds policy coverage",
+        Error::PolicyNotFound => "policy not found",
+        Error::ExcessiveEvidenceBytes => "claim evidence payload exceeds the configured size limit",
         Error::DetailsTooLong => "claim details exceed maximum length",
         Error::TooManyImageUrls => "too many image URLs supplied",
         Error::ImageUrlTooLong => "image URL exceeds maximum length",
@@ -164,6 +191,15 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
         Error::VotingWindowStillOpen => "voting window is still open; cannot finalize yet",
         Error::NotEligibleVoter => "caller is not in the claim voter snapshot",
         Error::RateLimitExceeded => "claim rate-limit: wait before filing another claim",
+        Error::AppealWindowClosed => "appeal window has closed",
+        Error::AppealAlreadyOpen => "an appeal is already open for this claim",
+        Error::MaxAppealsReached => "claim has reached the maximum allowed appeals",
+        Error::ClaimNotRejected => "claim is not in rejected status; cannot open appeal",
+        Error::AppealNotOpen => "no appeal is currently open",
+        Error::AppealWindowStillOpen => "appeal voting window is still open; cannot finalize yet",
+        Error::VotingDurationOutOfBounds => {
+            "voting duration ledgers outside allowed min/max; see contract docs"
+        }
     };
     QuoteFailure {
         code: err as u32,
@@ -177,6 +213,7 @@ pub fn map_quote_error(env: &Env, err: Error) -> QuoteFailure {
 /// `asset` must be on the admin-controlled allowlist at call time.
 /// The asset is bound to the policy and used for both premium payment
 /// and future claim payouts — no cross-asset settlement in MVP.
+#[allow(clippy::too_many_arguments)]
 pub fn initiate_policy(
     env: &Env,
     holder: Address,
@@ -187,6 +224,7 @@ pub fn initiate_policy(
     safety_score: u32,
     base_amount: i128,
     asset: Address,
+    beneficiary: Option<Address>,
 ) -> Result<Policy, PolicyError> {
     // Check granular pause: policy binding should be blocked if bind_paused
     storage::assert_bind_not_paused(env);
@@ -213,12 +251,15 @@ pub fn initiate_policy(
     }
 
     // Compute premium via the calculator (external or local fallback).
-    let quote = crate::calculator::compute_quote(env, &input, base_amount, false, QUOTE_TTL_LEDGERS)
-        .map_err(|e| match e {
-            validate::Error::CalculatorPaused => PolicyError::ContractPaused,
-            validate::Error::CalculatorCallFailed | validate::Error::CalculatorNotSet => PolicyError::PremiumOverflow,
-            _ => PolicyError::PremiumOverflow,
-        })?;
+    let quote =
+        crate::calculator::compute_quote(env, &input, base_amount, false, QUOTE_TTL_LEDGERS)
+            .map_err(|e| match e {
+                validate::Error::CalculatorPaused => PolicyError::ContractPaused,
+                validate::Error::CalculatorCallFailed | validate::Error::CalculatorNotSet => {
+                    PolicyError::PremiumOverflow
+                }
+                _ => PolicyError::PremiumOverflow,
+            })?;
     let premium_amount = quote.total_premium;
     if premium_amount <= 0 {
         return Err(PolicyError::InvalidPremium);
@@ -251,6 +292,11 @@ pub fn initiate_policy(
         start_ledger: current_ledger,
         end_ledger,
         asset: asset.clone(),
+        beneficiary: beneficiary.clone(),
+        terminated_at_ledger: 0,
+        termination_reason: crate::types::TerminationReason::None,
+        terminated_by_admin: false,
+        strike_count: 0,
     };
 
     validate::check_policy(&policy).map_err(|_| PolicyError::PolicyValidation)?;
@@ -272,5 +318,52 @@ pub fn initiate_policy(
     }
     .publish(env);
 
+    if let Some(ref b) = beneficiary {
+        BeneficiaryUpdated {
+            holder: holder.clone(),
+            policy_id,
+            old_beneficiary: None,
+            new_beneficiary: Some(b.clone()),
+        }
+        .publish(env);
+    }
+
     Ok(policy)
+}
+
+/// Update the optional payout beneficiary. Only the policy holder may call (authenticated via `holder`).
+///
+/// Admin cannot change this without the holder signing the transaction.
+pub fn set_beneficiary(
+    env: &Env,
+    holder: Address,
+    policy_id: u32,
+    new_beneficiary: Option<Address>,
+) -> Result<(), PolicyError> {
+    holder.require_auth();
+
+    let mut policy = storage::get_policy(env, &holder, policy_id).ok_or(PolicyError::NotFound)?;
+
+    if policy.holder != holder {
+        return Err(PolicyError::Unauthorized);
+    }
+
+    let old_beneficiary = policy.beneficiary.clone();
+    if old_beneficiary == new_beneficiary {
+        return Ok(());
+    }
+
+    policy.beneficiary = new_beneficiary.clone();
+    validate::check_policy(&policy).map_err(|_| PolicyError::PolicyValidation)?;
+    storage::set_policy(env, &holder, policy_id, &policy);
+
+    BeneficiaryUpdated {
+        holder: holder.clone(),
+        policy_id,
+        old_beneficiary,
+        new_beneficiary,
+    }
+    .publish(env);
+
+    Ok(())
 }

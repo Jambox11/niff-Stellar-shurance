@@ -1,6 +1,7 @@
+import { getConfig } from '@/config/env'
 import { QuoteFormData, QuoteResponse, QuoteError as QuoteErrorType } from '@/lib/schemas/quote'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
+const { apiUrl: API_BASE_URL } = getConfig()
 
 export class QuoteAPI {
   private static async handleResponse<T>(response: Response): Promise<T> {
@@ -41,7 +42,7 @@ export class QuoteError extends Error {
   constructor(
     public code: string,
     message: string,
-    public details?: Record<string, any>
+    public details?: Record<string, unknown>
   ) {
     super(message)
     this.name = 'QuoteError'

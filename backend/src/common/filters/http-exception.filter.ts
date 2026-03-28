@@ -4,80 +4,79 @@ import {
   ArgumentsHost,
   HttpException,
   HttpStatus,
-  BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ValidationError } from 'class-validator';
 
+/**
+ * Maps Stellar / Soroban error strings to stable API error codes.
+ * Keeps raw blockchain internals out of client-facing responses.
+ */
+const STELLAR_ERROR_MAP: Record<string, string> = {
+  tx_failed: 'TRANSACTION_FAILED',
+  tx_bad_auth: 'SIGNATURE_INVALID',
+  tx_insufficient_fee: 'INSUFFICIENT_FEE',
+  tx_no_account: 'INVALID_WALLET_ADDRESS',
+  op_no_trust: 'TRANSACTION_FAILED',
+  op_underfunded: 'INSUFFICIENT_BALANCE',
+  ledgerClosed: 'LEDGER_CLOSED',
+  timeout: 'TIMEOUT_ERROR',
+};
+
+function normalizeStellarError(raw: string): string | undefined {
+  const lower = raw.toLowerCase();
+  for (const [key, code] of Object.entries(STELLAR_ERROR_MAP)) {
+    if (lower.includes(key.toLowerCase())) return code;
+  }
+  return undefined;
+}
+
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(HttpExceptionFilter.name);
+
   catch(exception: unknown, host: ArgumentsHost): void {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
-    const req = ctx.getRequest<Request>();
+    const request = ctx.getRequest<Request & { requestId?: string }>();
 
-    let status = HttpStatus.INTERNAL_SERVER_ERROR;
-    let body = {
+    const status =
+      exception instanceof HttpException
+        ? exception.getStatus()
+        : HttpStatus.INTERNAL_SERVER_ERROR;
+
+    const rawResponse =
+      exception instanceof HttpException
+        ? exception.getResponse()
+        : 'Internal server error';
+
+    // Normalize Stellar error codes when present
+    let errorCode: string | undefined;
+    if (exception instanceof Error) {
+      errorCode = normalizeStellarError(exception.message);
+    }
+
+    // Log 5xx errors with stack trace; 4xx are client errors — debug level
+    if (status >= 500) {
+      this.logger.error(
+        `${request.method} ${request.url} → ${status}`,
+        exception instanceof Error ? exception.stack : String(exception),
+      );
+    } else {
+      this.logger.debug(`${request.method} ${request.url} → ${status}`);
+    }
+
+    response.status(status).json({
       statusCode: status,
       timestamp: new Date().toISOString(),
-      path: req.url,
-      message: 'Internal server error',
-    };
-
-    if (exception instanceof HttpException) {
-      status = exception.getStatus();
-      const response = exception.getResponse() as any;
-
-      // Handle validation errors consistently (RFC7807-inspired)
-      if (status === HttpStatus.BAD_REQUEST && response?.message && Array.isArray(response.message)) {
-        const validationErrors = response.message as ValidationError[];
-        const violations = this.extractViolations(validationErrors);
-
-        body = {
-          statusCode: status,
-          error: {
-            type: 'https://datatracker.ietf.org/doc/html/rfc7807#section-3.1',
-            code: 'VALIDATION_ERROR',
-            title: 'One or more validation errors occurred.',
-            violations,
-          },
-          timestamp: new Date().toISOString(),
-          path: req.url,
-        };
-      } else if (status === HttpStatus.BAD_REQUEST) {
-        // Generic bad request
-        body.message = Array.isArray(response.message) ? response.message[0] : response.message || 'Bad Request';
-        body.statusCode = status;
-      } else {
-        // Other HTTP exceptions (401, 403, etc.)
-        body.message = Array.isArray(response.message) ? response.message[0] : response.message || 'Error';
-        body.statusCode = status;
-      }
-    }
-
-    response.status(status).json(body);
-  }
-
-  private extractViolations(errors: ValidationError[], prefix = ''): any[] {
-    const violations: any[] = [];
-
-    for (const error of errors) {
-      if (error.constraints) {
-        for (const [constraintName, reason] of Object.entries(error.constraints)) {
-          violations.push({
-            field: prefix ? `${prefix}.${error.property}` : error.property,
-            code: constraintName,
-            reason,
-          });
-        }
-      }
-
-      if (error.children && error.children.length > 0) {
-        violations.push(...this.extractViolations(error.children, error.property));
-      }
-    }
-
-    return violations;
+      path: request.url,
+      requestId: request.requestId, // correlation ID for support escalation
+      ...(errorCode ? { error: errorCode } : {}),
+      message:
+        typeof rawResponse === 'string'
+          ? rawResponse
+          : (rawResponse as Record<string, unknown>).message ?? rawResponse,
+    });
   }
 }
-

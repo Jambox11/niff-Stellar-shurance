@@ -1,19 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useForm, Controller } from 'react-hook-form'
+import { useState, useEffect, useRef } from 'react'
+import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { PolicyInitiationSchema, PolicyInitiationData, Transaction, Policy } from '@/lib/schemas/policy'
-import { PolicyAPI, PolicyError, getPolicyErrorMessage, getExplorerUrl } from '@/lib/api/policy'
-import { QuoteAPI } from '@/lib/api/quote'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Badge } from '@/components/ui/badge'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Stepper, StepContent, type Step } from '@/components/ui/stepper'
-import { useToast } from '@/components/ui/use-toast'
 import { 
   Loader2, 
   AlertCircle, 
@@ -21,11 +10,25 @@ import {
   Copy, 
   ExternalLink,
   Wallet,
-  FileText,
-  Shield,
-  Check
+  Shield
 } from 'lucide-react'
 import { useSearchParams } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useForm } from 'react-hook-form'
+
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Stepper, StepContent, type Step } from '@/components/ui/stepper'
+import { useToast } from '@/components/ui/use-toast'
+import { PolicyAPI, PolicyError, getPolicyErrorMessage, getExplorerUrl } from '@/lib/api/policy'
+import { QuoteAPI, QuoteError, getQuoteErrorMessage } from '@/lib/api/quote'
+import { PolicyInitiationSchema, PolicyInitiationData, Transaction, Policy } from '@/lib/schemas/policy'
+import type { QuoteResponse } from '@/lib/schemas/quote'
+
 
 interface PolicyInitiationProps {
   quoteId?: string
@@ -37,31 +40,29 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
   const quoteId = propQuoteId || searchParams.get('quoteId') || ''
   
   const [currentStep, setCurrentStep] = useState(0)
-  const [quote, setQuote] = useState<any>(null)
+  const [quote, setQuote] = useState<QuoteResponse | null>(null)
   const [transaction, setTransaction] = useState<Transaction | null>(null)
   const [policy, setPolicy] = useState<Policy | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isPolling, setIsPolling] = useState(false)
   const [walletConnected, setWalletConnected] = useState(false)
   const [walletAddress, setWalletAddress] = useState('')
+  const [txStatus, setTxStatus] = useState('')
+  const stepHeadingRef = useRef<HTMLHeadingElement>(null)
 
   const {
     register,
     handleSubmit,
-    control,
     formState: { errors, isValid },
     setValue,
-    watch
   } = useForm<PolicyInitiationData>({
-    resolver: zodResolver(PolicyInitiationSchema) as any,
+    resolver: zodResolver(PolicyInitiationSchema),
     defaultValues: {
       quoteId,
       walletAddress: '',
       acceptTerms: false,
     }
   })
-
-  const acceptTerms = watch('acceptTerms')
 
   const steps: Step[] = [
     {
@@ -90,42 +91,48 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
     }
   ]
 
+  // Move focus to step heading when step changes
+  useEffect(() => {
+    if (stepHeadingRef.current) {
+      stepHeadingRef.current.focus()
+    }
+  }, [currentStep])
+
   useEffect(() => {
     if (quoteId) {
-      loadQuote()
-    }
-  }, [quoteId])
-
-  const loadQuote = async () => {
-    try {
-      const quoteData = await QuoteAPI.getQuoteById(quoteId)
-      setQuote(quoteData)
-      setCurrentStep(1)
-    } catch (error) {
-      if (error instanceof PolicyError) {
-        toast({
-          title: 'Quote Error',
-          description: getPolicyErrorMessage(error),
-          variant: 'destructive'
-        })
+      const loadQuote = async () => {
+        try {
+          const quoteData = await QuoteAPI.getQuoteById(quoteId)
+          setQuote(quoteData)
+          setCurrentStep(1)
+        } catch (error) {
+          if (error instanceof QuoteError) {
+            toast({
+              title: 'Quote Error',
+              description: getQuoteErrorMessage(error),
+              variant: 'destructive'
+            })
+          }
+        }
       }
+
+      void loadQuote()
     }
-  }
+  }, [quoteId, toast])
 
   const connectWallet = async () => {
     try {
-      // Mock wallet connection - in real app, integrate with Stellar wallet
       const mockAddress = 'GABCDEFGHIJKLMNOPQRSTUVWXYZABCDEFGHIJKLMNOPQRSTUVWXYZ123456'
       setWalletAddress(mockAddress)
       setWalletConnected(true)
       setValue('walletAddress', mockAddress)
       setCurrentStep(2)
-      
+      setTxStatus('Wallet connected.')
       toast({
         title: 'Wallet Connected',
         description: 'Your Stellar wallet has been connected successfully',
       })
-    } catch (error) {
+    } catch {
       toast({
         title: 'Connection Error',
         description: 'Failed to connect wallet. Please try again.',
@@ -137,21 +144,19 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
   const initiatePolicy = async (data: PolicyInitiationData) => {
     try {
       setIsSubmitting(true)
+      setTxStatus('Building policy transaction…')
       const transactionData = await PolicyAPI.initiatePolicy(data)
       setTransaction(transactionData)
       setCurrentStep(3)
-      
-      // Simulate wallet signing
+      setTxStatus('Waiting for wallet signature…')
       setTimeout(() => {
         submitTransaction(transactionData)
       }, 2000)
     } catch (error) {
+      const msg = error instanceof PolicyError ? getPolicyErrorMessage(error) : 'Policy initiation failed.'
+      setTxStatus(`Error: ${msg}`)
       if (error instanceof PolicyError) {
-        toast({
-          title: 'Policy Error',
-          description: getPolicyErrorMessage(error),
-          variant: 'destructive'
-        })
+        toast({ title: 'Policy Error', description: msg, variant: 'destructive' })
       }
     } finally {
       setIsSubmitting(false)
@@ -161,38 +166,33 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
   const submitTransaction = async (transactionData: Transaction) => {
     try {
       setIsPolling(true)
-      
-      // Mock signature - in real app, get from wallet
+      setTxStatus('Submitting transaction to network…')
       const mockSignature = 'mock-signature'
-      
       const result = await PolicyAPI.submitTransaction(transactionData.transactionXdr, mockSignature)
-      
-      // Poll for policy confirmation
+      setTxStatus('Waiting for blockchain confirmation…')
       const confirmedPolicy = await PolicyAPI.pollPolicyStatus(result.policyId)
       setPolicy(confirmedPolicy)
-      
+      setTxStatus(`Policy ${confirmedPolicy.policyId} is now active.`)
       toast({
         title: 'Policy Created!',
         description: `Your policy ${confirmedPolicy.policyId} is now active`,
       })
     } catch (error) {
+      const msg = error instanceof PolicyError ? getPolicyErrorMessage(error) : 'Transaction failed.'
+      setTxStatus(`Transaction failed: ${msg}`)
       if (error instanceof PolicyError) {
-        toast({
-          title: 'Transaction Error',
-          description: getPolicyErrorMessage(error),
-          variant: 'destructive'
-        })
+        toast({ title: 'Transaction Error', description: msg, variant: 'destructive' })
       }
     } finally {
       setIsPolling(false)
     }
   }
 
-  const copyToClipboard = (text: string) => {
+  const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text)
     toast({
       title: 'Copied',
-      description: 'Text copied to clipboard',
+      description: `${label} copied to clipboard`,
     })
   }
 
@@ -297,9 +297,10 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => copyToClipboard(walletAddress)}
+                      onClick={() => copyToClipboard(walletAddress, 'Wallet address')}
+                      aria-label="Copy wallet address to clipboard"
                     >
-                      <Copy className="h-3 w-3" />
+                      <Copy className="h-3 w-3" aria-hidden="true" />
                     </Button>
                   </div>
                 </div>
@@ -341,7 +342,7 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                       type="checkbox"
                       id="acceptTerms"
                       {...register('acceptTerms')}
-                      className="rounded border-gray-300"
+                      className="rounded border-gray-300 h-5 w-5"
                     />
                     <Label htmlFor="acceptTerms" className="text-sm">
                       I accept the terms and conditions and understand the risks
@@ -373,20 +374,23 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                   </div>
                 </div>
 
-                <Button 
-                  type="submit" 
-                  disabled={!isValid || isSubmitting}
-                  className="w-full"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Initiating Policy...
-                    </>
-                  ) : (
-                    'Initiate Policy'
-                  )}
-                </Button>
+                {/* Sticky CTA on mobile */}
+                <div className="sticky-action-bar bg-background/95 backdrop-blur-sm border-t pt-3 -mx-6 px-6 sm:static sm:border-0 sm:bg-transparent sm:backdrop-blur-none sm:pt-0 sm:mx-0 sm:px-0">
+                  <Button
+                    type="submit"
+                    disabled={!isValid || isSubmitting}
+                    className="w-full"
+                  >
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Initiating Policy...
+                      </>
+                    ) : (
+                      'Initiate Policy'
+                    )}
+                  </Button>
+                </div>
               </form>
             </div>
           </StepContent>
@@ -432,9 +436,10 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                         <Button
                           variant="ghost"
                           size="sm"
-                          onClick={() => copyToClipboard(policy.policyId)}
+                          onClick={() => copyToClipboard(policy.policyId, 'Policy ID')}
+                          aria-label="Copy policy ID to clipboard"
                         >
-                          <Copy className="h-3 w-3" />
+                          <Copy className="h-3 w-3" aria-hidden="true" />
                         </Button>
                       </div>
                     </div>
@@ -464,8 +469,9 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
                           href={getExplorerUrl(policy.transactionHash)}
                           target="_blank"
                           rel="noopener noreferrer"
+                          aria-label="View transaction on Stellar Explorer (opens in new tab)"
                         >
-                          <ExternalLink className="mr-2 h-4 w-4" />
+                          <ExternalLink className="mr-2 h-4 w-4" aria-hidden="true" />
                           View Transaction
                         </a>
                       </Button>
@@ -502,9 +508,14 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
 
   return (
     <div className="container mx-auto px-4 py-8">
+      {/* Live region for tx status updates */}
+      <div role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+        {txStatus}
+      </div>
+
       <div className="text-center mb-8">
         <div className="flex items-center justify-center mb-4">
-          <Shield className="h-8 w-8 text-blue-600 mr-2" />
+          <Shield className="h-8 w-8 text-blue-600 mr-2" aria-hidden="true" />
           <h1 className="text-3xl font-bold text-gray-900">Create Insurance Policy</h1>
         </div>
         <p className="text-lg text-gray-600 max-w-2xl mx-auto">
@@ -513,8 +524,17 @@ export function PolicyInitiation({ quoteId: propQuoteId }: PolicyInitiationProps
       </div>
 
       <div className="max-w-4xl mx-auto">
-        <Stepper steps={steps} currentStep={currentStep} className="mb-8" />
-        
+        <Stepper steps={steps} currentStep={currentStep} aria-label="Policy creation steps" className="mb-8" />
+
+        {/* Visually hidden heading receives focus on step change */}
+        <h2
+          ref={stepHeadingRef}
+          tabIndex={-1}
+          className="sr-only focus:not-sr-only focus:outline-none"
+        >
+          Step {currentStep + 1} of {steps.length}: {steps[currentStep]?.title}
+        </h2>
+
         <Card>
           <CardContent className="p-6">
             {renderStepContent()}

@@ -1,5 +1,8 @@
 'use client'
 
+import { AlertTriangle } from 'lucide-react'
+
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -8,8 +11,8 @@ import {
   DialogDescription,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
 import { VoteOption } from '@/lib/schemas/vote'
+
 
 interface VoteConfirmModalProps {
   open: boolean
@@ -66,8 +69,22 @@ export function VoteConfirmModal({
           apply.
         </div>
 
+        {/* Wallet in-app browser notice */}
+        <div
+          role="note"
+          className="flex items-start gap-2 rounded-md border border-yellow-200 bg-yellow-50 px-3 py-2 text-xs text-yellow-900"
+        >
+          <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
+          <span>
+            If you&apos;re using a wallet&apos;s built-in browser, extension-based signing
+            may not be available. Use the wallet&apos;s native signing prompt instead.
+          </span>
+        </div>
+
+        {/* Footer: stacked on mobile (full-width), row on sm+ */}
         <DialogFooter>
           <Button
+            className="w-full sm:w-auto"
             variant="outline"
             onClick={onCancel}
             disabled={submitting}
@@ -76,6 +93,7 @@ export function VoteConfirmModal({
             Cancel
           </Button>
           <Button
+            className="w-full sm:w-auto"
             variant={vote === 'Reject' ? 'destructive' : 'default'}
             onClick={onConfirm}
             disabled={submitting}

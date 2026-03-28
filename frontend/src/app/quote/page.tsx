@@ -1,6 +1,7 @@
-import { QuoteForm } from '@/components/quote/quote-form'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Shield, Calculator } from 'lucide-react'
+
+import { QuoteForm } from '@/components/quote/quote-form'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
 export default function QuotePage() {
   return (

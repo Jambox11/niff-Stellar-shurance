@@ -1,3 +1,4 @@
+import { getConfig } from '@/config/env'
 import {
   Claim,
   ClaimSchema,
@@ -8,11 +9,7 @@ import {
   VoteResponseSchema,
 } from '@/lib/schemas/vote'
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'
-const EXPLORER_BASE =
-  process.env.NEXT_PUBLIC_NETWORK === 'PUBLIC'
-    ? 'https://stellar.expert/explorer/public/tx'
-    : 'https://stellar.expert/explorer/testnet/tx'
+const { apiUrl: API_BASE, explorerBase: EXPLORER_BASE } = getConfig()
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {

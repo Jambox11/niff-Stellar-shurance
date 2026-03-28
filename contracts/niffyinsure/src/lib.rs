@@ -1,36 +1,85 @@
-﻿#![no_std]
+#![no_std]
+#![allow(clippy::too_many_arguments)]
 
+pub mod admin;
 mod calculator;
 mod claim;
+pub mod events;
+mod governance_token;
 mod ledger;
 mod policy;
 mod policy_lifecycle;
-mod premium;
-mod storage;
+pub mod premium;
+pub mod premium_pure;
+pub mod storage;
 mod token;
 pub mod types;
 pub mod validate;
-pub mod admin;
 
 #[cfg(feature = "experimental")]
 mod oracle;
 #[cfg(feature = "experimental")]
 pub use oracle::*;
 
-use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, String, Vec};
+use soroban_sdk::{contract, contractevent, contractimpl, panic_with_error, Address, Env, Vec};
 
 #[contract]
 pub struct NiffyInsure;
+pub use admin::AdminError;
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[soroban_sdk::contracterror]
+#[repr(u32)]
+pub enum InitError {
+    AlreadyInitialized = 1,
+}
+
+#[contractevent(topics = ["niffyinsure", "allowed_asset_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct AllowedAssetUpdated {
+    #[topic]
+    pub asset: Address,
+    pub allowed: bool,
+}
+
+#[contractevent(topics = ["niffyinsure", "voting_duration_updated"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct VotingDurationUpdated {
+    pub old_ledgers: u32,
+    pub new_ledgers: u32,
+}
+
+#[contractevent(topics = ["niffyinsure", "pause_toggled"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct PauseToggled {
+    #[topic]
+    pub admin: Address,
+    pub paused: bool,
+    pub reason_code: u32,
+    pub bind_paused: bool,
+    pub claims_paused: bool,
+}
+
+#[allow(clippy::too_many_arguments)]
 #[contractimpl]
 impl NiffyInsure {
     /// One-time initialisation: store admin and token contract address, and
     /// seed the default premium table so quote generation is deterministic.
-    pub fn initialize(env: Env, admin: Address, token: Address) {
+    pub fn initialize(env: Env, admin: Address, token: Address) -> Result<(), InitError> {
+        admin.require_auth();
+        if env.storage().instance().has(&storage::DataKey::Admin) {
+            return Err(InitError::AlreadyInitialized);
+        }
         storage::set_admin(&env, &admin);
         storage::set_token(&env, &token);
         storage::set_multiplier_table(&env, &premium::default_multiplier_table(&env));
         storage::set_allowed_asset(&env, &token, true);
+        storage::set_voting_duration_ledgers(&env, ledger::VOTE_WINDOW_LEDGERS);
+        Ok(())
+    }
+
+    pub fn get_admin(env: Env) -> Address {
+        storage::get_admin(&env)
     }
 
     /// Pure quote path: reads config and computes premium only.
@@ -85,6 +134,18 @@ impl NiffyInsure {
             29 => validate::Error::InvalidAsset,
             30 => validate::Error::InsufficientTreasury,
             31 => validate::Error::AlreadyPaid,
+            32 => validate::Error::ClaimNotApproved,
+            33 => validate::Error::DuplicateOpenClaim,
+            34 => validate::Error::ExcessiveEvidenceBytes,
+            35 => validate::Error::PolicyNotFound,
+            36 => validate::Error::CalculatorNotSet,
+            37 => validate::Error::CalculatorCallFailed,
+            38 => validate::Error::CalculatorPaused,
+            39 => validate::Error::VotingWindowClosed,
+            40 => validate::Error::VotingWindowStillOpen,
+            41 => validate::Error::NotEligibleVoter,
+            42 => validate::Error::RateLimitExceeded,
+            49 => validate::Error::VotingDurationOutOfBounds,
             _ => validate::Error::ClaimNotApproved,
         };
         policy::map_quote_error(&env, err)
@@ -104,20 +165,15 @@ impl NiffyInsure {
     }
 
     /// Admin-only: add or remove an asset from the allowlist.
-    /// Emits ("asset", "added") or ("asset", "removed") for indexers.
     pub fn set_allowed_asset(env: Env, asset: Address, allowed: bool) {
-        let admin = storage::get_admin(&env);
-        admin.require_auth();
+        let _admin = admin::require_admin(&env);
         storage::bump_instance(&env);
         claim::set_allowed_asset(&env, &asset, allowed);
-        env.events().publish(
-            (symbol_short!("asset"), if allowed { symbol_short!("added") } else { symbol_short!("removed") }),
-            asset,
-        );
+        AllowedAssetUpdated { asset, allowed }.publish(&env);
     }
 
     pub fn is_allowed_asset(env: Env, asset: Address) -> bool {
-        claim::is_allowed_asset(&env, &asset)
+        storage::is_allowed_asset(&env, &asset)
     }
 
     pub fn process_claim(env: Env, claim_id: u64) -> Result<(), validate::Error> {
@@ -134,6 +190,42 @@ impl NiffyInsure {
         storage::get_claim_counter(&env)
     }
 
+    /// Paginated listing of claims by claim_id range, ordered ascending.
+    ///
+    /// `start_after` is an exclusive cursor: pass `0` for the first page, or the
+    /// last `claim_id` received to advance to the next page.
+    /// `limit` is capped at `PAGE_SIZE_MAX` (20); larger values are silently clamped.
+    ///
+    /// Returns summary structs — call `get_claim` for the full record.
+    ///
+    /// Empty page (len == 0) means no more results exist beyond the cursor.
+    /// Because claim_ids are monotonically increasing and never deleted, a
+    /// stale cursor never panics — it simply returns an empty page.
+    pub fn list_claims(
+        env: Env,
+        start_after: u64,
+        limit: u32,
+    ) -> Vec<types::ClaimSummary> {
+        let cap = limit.min(types::PAGE_SIZE_MAX);
+        let total = storage::get_claim_counter(&env);
+        let mut results: Vec<types::ClaimSummary> = Vec::new(&env);
+        let mut id: u64 = start_after.saturating_add(1);
+        while id <= total && results.len() < cap {
+            if let Some(c) = storage::get_claim(&env, id) {
+                results.push_back(types::ClaimSummary {
+                    claim_id: c.claim_id,
+                    policy_id: c.policy_id,
+                    amount: c.amount,
+                    status: c.status,
+                    filed_at: c.filed_at,
+                    voting_deadline_ledger: c.voting_deadline_ledger,
+                });
+            }
+            id = id.saturating_add(1);
+        }
+        results
+    }
+
     pub fn get_policy_counter(env: Env, holder: Address) -> u32 {
         storage::get_policy_counter(&env, &holder)
     }
@@ -144,6 +236,36 @@ impl NiffyInsure {
 
     pub fn get_voters(env: Env) -> Vec<Address> {
         storage::get_voters(&env)
+    }
+
+    pub fn voter_registry_len(env: Env) -> u32 {
+        storage::get_voters(&env).len()
+    }
+
+    pub fn voter_registry_contains(env: Env, holder: Address) -> bool {
+        storage::get_voters(&env).iter().any(|v| v == holder)
+    }
+
+    pub fn holder_active_policy_count(env: Env, holder: Address) -> u32 {
+        storage::get_holder_active_policy_count(&env, &holder)
+    }
+
+    pub fn set_calculator(env: Env, calculator: Address) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        storage::set_calc_address(&env, &calculator);
+    }
+
+    pub fn clear_calculator(env: Env) {
+        let admin = storage::get_admin(&env);
+        admin.require_auth();
+        env.storage()
+            .instance()
+            .remove(&storage::DataKey::CalcAddress);
+    }
+
+    pub fn get_calculator(env: Env) -> Option<Address> {
+        storage::get_calc_address(&env)
     }
 
     // ── Policy domain ────────────────────────────────────────────────────
@@ -162,11 +284,30 @@ impl NiffyInsure {
         safety_score: u32,
         base_amount: i128,
         asset: Address,
+        beneficiary: Option<Address>,
     ) -> Result<types::Policy, policy::PolicyError> {
         policy::initiate_policy(
-            &env, holder, policy_type, region,
-            age_band, coverage_type, safety_score, base_amount, asset,
+            &env,
+            holder,
+            policy_type,
+            region,
+            age_band,
+            coverage_type,
+            safety_score,
+            base_amount,
+            asset,
+            beneficiary,
         )
+    }
+
+    /// Set or clear the payout beneficiary. Holder-authenticated only.
+    pub fn set_beneficiary(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+        beneficiary: Option<Address>,
+    ) -> Result<(), policy::PolicyError> {
+        policy::set_beneficiary(&env, holder, policy_id, beneficiary)
     }
 
     /// Read-only: retrieve a persisted policy by (holder, policy_id).
@@ -174,9 +315,162 @@ impl NiffyInsure {
         storage::get_policy(&env, &holder, policy_id)
     }
 
+    /// Batch-read policies in one simulation/RPC round-trip.
+    ///
+    /// Returns `Vec` aligned with `ids`: `out[i]` is `Some(policy)` or `None` if that
+    /// key is missing — absent keys never revert the whole batch.
+    ///
+    /// # Hard cap — **`POLICY_BATCH_GET_MAX` (20)**
+    ///
+    /// Matches [`types::PAGE_SIZE_MAX`]: each entry is an independent storage read, so
+    /// large batches multiply metered reads and can exceed the default Soroban
+    /// instruction budget during simulation. Dashboards and indexers must chunk
+    /// requests. **More than 20 keys reverts** with [`validate::Error::PolicyBatchTooLarge`]
+    /// (unlike `list_policies`, which clamps `limit` instead of erroring).
+    ///
+    /// The cap is checked **before** any policy storage access (no unbounded iteration).
+    pub fn get_policies_batch(
+        env: Env,
+        ids: Vec<types::PolicyLookupKey>,
+    ) -> Vec<Option<types::Policy>> {
+        if ids.len() > types::POLICY_BATCH_GET_MAX {
+            panic_with_error!(&env, validate::Error::PolicyBatchTooLarge);
+        }
+        let mut out: Vec<Option<types::Policy>> = Vec::new(&env);
+        for i in 0..ids.len() {
+            let key = ids.get(i).unwrap();
+            out.push_back(storage::get_policy(&env, &key.holder, key.policy_id));
+        }
+        out
+    }
+
+    /// Paginated listing of a holder's policies, ordered by ascending policy_id.
+    ///
+    /// `start_after` is an exclusive cursor: pass `0` for the first page, or the
+    /// last `policy_id` received to advance to the next page.
+    /// `limit` is capped at `PAGE_SIZE_MAX` (20); larger values are silently clamped.
+    ///
+    /// Returns summary structs — call `get_policy` for the full record.
+    ///
+    /// Empty page (len == 0) means no more results exist beyond the cursor.
+    /// Because policy_ids are monotonically increasing and never deleted, a
+    /// stale cursor never panics — it simply returns an empty page.
+    pub fn list_policies(
+        env: Env,
+        holder: Address,
+        start_after: u32,
+        limit: u32,
+    ) -> Vec<types::PolicySummary> {
+        let cap = limit.min(types::PAGE_SIZE_MAX);
+        let total = storage::get_policy_counter(&env, &holder);
+        let mut results: Vec<types::PolicySummary> = Vec::new(&env);
+        let mut id: u32 = start_after.saturating_add(1);
+        while id <= total && results.len() < cap {
+            if let Some(p) = storage::get_policy(&env, &holder, id) {
+                results.push_back(types::PolicySummary {
+                    policy_id: p.policy_id,
+                    policy_type: p.policy_type,
+                    coverage: p.coverage,
+                    is_active: p.is_active,
+                    end_ledger: p.end_ledger,
+                });
+            }
+            id = id.saturating_add(1);
+        }
+        results
+    }
+
     /// Read-only: number of active policies for a holder (= vote weight).
     pub fn get_active_policy_count(env: Env, holder: Address) -> u32 {
         storage::get_active_policy_count(&env, &holder)
+    }
+
+    pub fn terminate_policy(
+        env: Env,
+        holder: Address,
+        policy_id: u32,
+        reason: types::TerminationReason,
+    ) -> Result<(), policy_lifecycle::PolicyError> {
+        policy_lifecycle::terminate_policy(&env, holder, policy_id, reason)
+    }
+
+    pub fn admin_terminate_policy(
+        env: Env,
+        admin: Address,
+        holder: Address,
+        policy_id: u32,
+        reason: types::TerminationReason,
+        allow_open_claims: bool,
+    ) -> Result<(), policy_lifecycle::PolicyError> {
+        policy_lifecycle::admin_terminate_policy(
+            &env,
+            admin,
+            holder,
+            policy_id,
+            reason,
+            allow_open_claims,
+        )
+    }
+
+    pub fn propose_admin(env: Env, new_admin: Address) {
+        admin::propose_admin(&env, new_admin);
+    }
+
+    pub fn accept_admin(env: Env) {
+        admin::accept_admin(&env);
+    }
+
+    pub fn cancel_admin(env: Env) {
+        admin::cancel_admin(&env);
+    }
+
+    pub fn set_token(env: Env, new_token: Address) {
+        admin::set_token(&env, new_token);
+    }
+
+    pub fn set_treasury(env: Env, new_treasury: Address) {
+        admin::set_treasury(&env, new_treasury);
+    }
+
+    pub fn drain(env: Env, recipient: Address, amount: i128) {
+        admin::drain(&env, recipient, amount);
+    }
+
+    /// Emergency token sweep: recover mistakenly sent tokens with strict ethical constraints.
+    ///
+    /// # Security & Ethics
+    /// - Admin-only (requires multisig in production)
+    /// - Asset must be allowlisted
+    /// - Optional per-transaction cap
+    /// - Protected balance check (won't violate approved claims)
+    /// - Comprehensive audit trail
+    ///
+    /// # Parameters
+    /// - `asset`: Token contract address (must be allowlisted)
+    /// - `recipient`: Destination for swept tokens
+    /// - `amount`: Amount to sweep (must be > 0)
+    /// - `reason_code`: Audit code (1=accidental transfer, 2=test tokens, 3=airdrop, etc.)
+    ///
+    /// See SWEEP_RUNBOOK.md for operational guidance and legal requirements.
+    pub fn sweep_token(
+        env: Env,
+        asset: Address,
+        recipient: Address,
+        amount: i128,
+        reason_code: u32,
+    ) {
+        admin::sweep_token(&env, asset, recipient, amount, reason_code);
+    }
+
+    /// Set optional per-transaction cap for sweep operations.
+    /// Pass None to disable cap. Admin-only.
+    pub fn set_sweep_cap(env: Env, cap: Option<i128>) {
+        admin::set_sweep_cap(&env, cap);
+    }
+
+    /// Get current sweep cap (None if not set).
+    pub fn get_sweep_cap(env: Env) -> Option<i128> {
+        storage::get_sweep_cap(&env)
     }
 
     // ═════════════════════════════════════════════════════════════════════════════
@@ -198,12 +492,16 @@ impl NiffyInsure {
         let stored_admin = storage::get_admin(&env);
         assert!(admin == stored_admin, "only admin can pause");
         storage::set_paused(&env, true);
-        
-        // Emit PauseToggled event for monitoring
-        env.events().publish(
-            (symbol_short!("p_toggle"),),
-            (admin, true, reason_code),
-        );
+
+        let flags = storage::get_pause_flags(&env);
+        PauseToggled {
+            admin,
+            paused: true,
+            reason_code,
+            bind_paused: flags.bind_paused,
+            claims_paused: flags.claims_paused,
+        }
+        .publish(&env);
     }
 
     /// Unpause the contract with optional reason code.
@@ -214,12 +512,16 @@ impl NiffyInsure {
         let stored_admin = storage::get_admin(&env);
         assert!(admin == stored_admin, "only admin can unpause");
         storage::set_paused(&env, false);
-        
-        // Emit PauseToggled event for monitoring
-        env.events().publish(
-            (symbol_short!("p_toggle"),),
-            (admin, false, reason_code),
-        );
+
+        let flags = storage::get_pause_flags(&env);
+        PauseToggled {
+            admin,
+            paused: false,
+            reason_code,
+            bind_paused: flags.bind_paused,
+            claims_paused: flags.claims_paused,
+        }
+        .publish(&env);
     }
 
     /// Granular pause: pause only policy binding (initiate/renew).
@@ -227,15 +529,19 @@ impl NiffyInsure {
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         assert!(admin == stored_admin, "only admin can pause");
-        
+
         let mut flags = storage::get_pause_flags(&env);
         flags.bind_paused = true;
         storage::set_pause_flags(&env, &flags);
-        
-        env.events().publish(
-            (symbol_short!("p_toggle"),),
-            (admin, true, reason_code),
-        );
+
+        PauseToggled {
+            admin,
+            paused: true,
+            reason_code,
+            bind_paused: flags.bind_paused,
+            claims_paused: flags.claims_paused,
+        }
+        .publish(&env);
     }
 
     /// Granular pause: pause only claims (file/vote/finalize).
@@ -243,15 +549,19 @@ impl NiffyInsure {
         admin.require_auth();
         let stored_admin = storage::get_admin(&env);
         assert!(admin == stored_admin, "only admin can pause");
-        
+
         let mut flags = storage::get_pause_flags(&env);
         flags.claims_paused = true;
         storage::set_pause_flags(&env, &flags);
-        
-        env.events().publish(
-            (symbol_short!("p_toggle"),),
-            (admin, true, reason_code),
-        );
+
+        PauseToggled {
+            admin,
+            paused: true,
+            reason_code,
+            bind_paused: flags.bind_paused,
+            claims_paused: flags.claims_paused,
+        }
+        .publish(&env);
     }
 
     /// Get current pause state (legacy - true if ANY pause flag is set).
@@ -263,10 +573,41 @@ impl NiffyInsure {
     pub fn get_pause_flags(env: Env) -> storage::PauseFlags {
         storage::get_pause_flags(&env)
     }
+}
 
-    // ── Test-only helpers ─────────────────────────────────────────────────
+/// Governance token: reserved entrypoints only when built with `--features governance-token`.
+/// No mint/transfer/balance logic — see `governance_token` module TODO.
+#[cfg(feature = "governance-token")]
+#[contractimpl]
+impl NiffyInsure {
+    pub fn gov_token_runtime_enabled(env: Env) -> bool {
+        governance_token::governance_token_effective_enabled(&env)
+    }
 
-    #[cfg(feature = "testutils")]
+    pub fn gov_set_token_runtime_enabled(env: Env, admin: Address, enabled: bool) {
+        admin.require_auth();
+        let stored = storage::get_admin(&env);
+        assert!(admin == stored, "only admin");
+        storage::bump_instance(&env);
+        governance_token::set_governance_token_runtime_enabled(&env, enabled);
+    }
+
+    pub fn gov_token_address(env: Env) -> Option<Address> {
+        governance_token::get_governance_token_address(&env)
+    }
+
+    pub fn gov_set_token_address_stub(env: Env, admin: Address, token: Address) {
+        admin.require_auth();
+        let stored = storage::get_admin(&env);
+        assert!(admin == stored, "only admin");
+        storage::bump_instance(&env);
+        governance_token::set_governance_token_address(&env, &token);
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+#[contractimpl]
+impl NiffyInsure {
     pub fn test_seed_policy(
         env: Env,
         holder: Address,
@@ -274,7 +615,7 @@ impl NiffyInsure {
         coverage: i128,
         end_ledger: u32,
     ) {
-        use crate::types::{AgeBand, CoverageType, Policy, PolicyType, RegionTier};
+        use crate::types::{Policy, PolicyType, RegionTier, TerminationReason};
         let token = storage::get_token(&env);
         let policy = Policy {
             holder: holder.clone(),
@@ -287,15 +628,33 @@ impl NiffyInsure {
             start_ledger: 1,
             end_ledger,
             asset: token,
+            beneficiary: None,
+            terminated_at_ledger: 0,
+            termination_reason: TerminationReason::None,
+            terminated_by_admin: false,
+            strike_count: 0,
         };
-        env.storage()
-            .persistent()
-            .set(&storage::DataKey::Policy(holder.clone(), policy_id), &policy);
+        env.storage().persistent().set(
+            &storage::DataKey::Policy(holder.clone(), policy_id),
+            &policy,
+        );
         storage::add_voter(&env, &holder);
     }
 
-    #[cfg(feature = "testutils")]
     pub fn test_remove_voter(env: Env, holder: Address) {
         storage::remove_voter(&env, &holder);
+    }
+
+    pub fn admin_set_open_claim_count(
+        env: Env,
+        admin: Address,
+        holder: Address,
+        policy_id: u32,
+        open_claim_count: u32,
+    ) {
+        let expected = storage::get_admin(&env);
+        admin.require_auth();
+        assert!(admin == expected, "only admin can set open claim count");
+        storage::set_open_claim(&env, &holder, policy_id, open_claim_count > 0);
     }
 }

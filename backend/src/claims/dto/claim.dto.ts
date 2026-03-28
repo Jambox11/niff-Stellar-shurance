@@ -39,8 +39,7 @@ export class ClaimMetadataDto {
 
   @ApiProperty({ description: 'Current claim status' })
   @Expose()
-  @IsEnum(['pending', 'approved', 'rejected'])
-  status!: 'pending' | 'approved' | 'rejected';
+  status!: 'pending' | 'approved' | 'paid' | 'rejected';
 
   @ApiProperty({ description: 'Claim amount requested' })
   @Expose()
@@ -233,35 +232,26 @@ export class ClaimListItemDto {
   consistency!: ConsistencyMetadataDto;
 }
 
-export class PaginationDto {
-  @ApiProperty({ description: 'Current page number' })
+export class CursorPageDto {
+  @ApiProperty({
+    description:
+      'Opaque cursor to pass as `after` for the next page. Null when this is the last page.',
+    nullable: true,
+    example: 'eyJjcmVhdGVkQXQiOiIyMDI0LTAxLTAxVDAwOjAwOjAwLjAwMFoiLCJpZCI6NDJ9',
+  })
   @Expose()
-  @IsInt()
-  @Min(1)
-  page!: number;
+  next_cursor!: string | null;
 
-  @ApiProperty({ description: 'Items per page' })
-  @Expose()
-  @IsInt()
-  @Min(1)
-  limit!: number;
-
-  @ApiProperty({ description: 'Total items' })
+  @ApiProperty({
+    description:
+      'Total rows matching the filter before pagination. ' +
+      'Eventually consistent — may differ by ±1 under concurrent inserts.',
+    example: 42,
+  })
   @Expose()
   @IsInt()
   @Min(0)
   total!: number;
-
-  @ApiProperty({ description: 'Total pages' })
-  @Expose()
-  @IsInt()
-  @Min(1)
-  totalPages!: number;
-
-  @ApiProperty({ description: 'Has next page' })
-  @Expose()
-  @IsBoolean()
-  hasNext!: boolean;
 }
 
 export class ClaimsListResponseDto {
@@ -271,11 +261,9 @@ export class ClaimsListResponseDto {
   @Type(() => ClaimListItemDto)
   data!: ClaimListItemDto[];
 
-  @ApiProperty({ description: 'Pagination info', type: PaginationDto })
+  @ApiProperty({ description: 'Cursor pagination metadata', type: CursorPageDto })
   @Expose()
-  @ValidateNested()
-  @Type(() => PaginationDto)
-  pagination!: PaginationDto;
+  pagination!: CursorPageDto;
 }
 
 export class ClaimDetailResponseDto extends ClaimListItemDto {

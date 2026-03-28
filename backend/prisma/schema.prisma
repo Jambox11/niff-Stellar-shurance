@@ -29,6 +29,9 @@ model Claim {
   eventIndex        Int?
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
+  /// Logical tenant identifier. NULL in single-tenant deployments.
+  /// Populated by the indexer from the contract's tenant context.
+  tenantId          String?
 
   // Relations
   policy            Policy    @relation(fields: [policyId], references: [id])
@@ -37,6 +40,10 @@ model Claim {
   @@index([status])
   @@index([createdAt])
   @@index([policyId])
+  @@index([createdAt, id]) // keyset pagination: ORDER BY createdAt DESC, id DESC
+  @@index([tenantId])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt, id]) // tenant-scoped keyset pagination
   @@map("claims")
 }
 
@@ -78,6 +85,8 @@ model Policy {
   eventIndex            Int?
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
+  /// Logical tenant identifier. NULL in single-tenant deployments.
+  tenantId              String?
 
   // Relations
   claims                Claim[]
@@ -85,6 +94,10 @@ model Policy {
   @@unique([holderAddress, policyId])
   @@index([holderAddress])
   @@index([isActive])
+  @@index([createdAt, id]) // keyset pagination: ORDER BY createdAt DESC, id DESC
+  @@index([tenantId])
+  @@index([tenantId, isActive])
+  @@index([tenantId, createdAt, id]) // tenant-scoped keyset pagination
   @@map("policies")
 }
 
@@ -154,6 +167,41 @@ model FeatureFlag {
   updatedAt   DateTime @updatedAt
 
   @@map("feature_flags")
+}
+
+/// Deduplication table for wasm drift alerts — one row per (contract, actual-hash) pair.
+/// Prevents repeated webhook spam for the same unresolved drift.
+model WasmDriftAlert {
+  id            String   @id @default(uuid())
+  dedupKey      String   @unique /// "<contractName>:<actualHash>"
+  contractName  String
+  contractId    String
+  expectedHash  String
+  actualHash    String
+  resolvedAt    DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([contractName])
+  @@map("wasm_drift_alerts")
+}
+
+/// Tracks staff-initiated privacy requests (GDPR/CCPA-style) for off-chain data.
+/// On-chain and IPFS data is immutable and cannot be erased — see runbook.
+model PrivacyRequest {
+  id                    String    @id @default(uuid())
+  subjectWalletAddress  String
+  requestType           String    /// "ANONYMIZE" | "DELETE"
+  requestedBy           String    /// staff actor (wallet address or email)
+  status                String    @default("IN_PROGRESS") /// "IN_PROGRESS" | "COMPLETED" | "FAILED"
+  rowsAffected          Int       @default(0)
+  notes                 String?
+  errorMessage          String?
+  completedAt           DateTime?
+  createdAt             DateTime  @default(now())
+
+  @@index([subjectWalletAddress])
+  @@index([status])
+  @@map("privacy_requests")
 }
 
 /// Off-chain metadata for allowlisted SEP-41 asset contracts.

@@ -11,7 +11,7 @@
 
 use niffyinsure::{
     storage,
-    types::{ClaimStatus, Policy, PolicyType, RegionTier, VoteOption},
+    types::{ClaimStatus, Policy, PolicyType, RegionTier, TerminationReason, VoteOption},
     NiffyInsureClient,
 };
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, String};
@@ -29,7 +29,7 @@ fn setup() -> (Env, Address, Address, Address) {
     (env, contract_id, admin, token)
 }
 
-fn make_policy(holder: &Address, policy_id: u32) -> Policy {
+fn make_policy(holder: &Address, policy_id: u32, asset: &Address) -> Policy {
     Policy {
         holder: holder.clone(),
         policy_id,
@@ -40,6 +40,12 @@ fn make_policy(holder: &Address, policy_id: u32) -> Policy {
         is_active: true,
         start_ledger: 0,
         end_ledger: 9_999_999,
+        asset: asset.clone(),
+        beneficiary: None,
+        terminated_at_ledger: 0,
+        termination_reason: TerminationReason::None,
+        terminated_by_admin: false,
+        strike_count: 0,
     }
 }
 
@@ -86,12 +92,12 @@ fn contract_starts_unpaused() {
 
 #[test]
 fn set_and_get_policy_round_trip() {
-    let (env, contract_id, _, _) = setup();
+    let (env, contract_id, _, token) = setup();
     let holder = Address::generate(&env);
-    let policy = make_policy(&holder, 1);
+    let policy = make_policy(&holder, 1, &token);
 
     env.as_contract(&contract_id, || {
-        storage::set_policy(&env, &policy);
+        storage::set_policy(&env, &holder, policy.policy_id, &policy);
         let loaded = storage::get_policy(&env, &holder, 1).expect("policy must exist");
         assert_eq!(loaded.policy_id, 1);
         assert_eq!(loaded.coverage, 100_000_000);
@@ -105,7 +111,7 @@ fn set_and_get_policy_round_trip() {
 
 #[test]
 fn get_policy_returns_none_when_absent() {
-    let (env, contract_id, _, _) = setup();
+    let (env, contract_id, _, _token_addr) = setup();
     let holder = Address::generate(&env);
     env.as_contract(&contract_id, || {
         assert!(storage::get_policy(&env, &holder, 99).is_none());
@@ -140,7 +146,7 @@ fn add_voter_and_remove_voter() {
 
 #[test]
 fn set_and_get_claim_round_trip() {
-    let (env, contract_id, _, _) = setup();
+    let (env, contract_id, _, token) = setup();
     let holder = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
@@ -150,12 +156,20 @@ fn set_and_get_claim_round_trip() {
             policy_id: 1,
             claimant: holder.clone(),
             amount: 50_000_000,
+            asset: token.clone(),
             details: String::from_str(&env, "water damage"),
             image_urls: vec![&env],
             status: ClaimStatus::Processing,
+            voting_deadline_ledger: 101,
             approve_votes: 0,
             reject_votes: 0,
             filed_at: 1,
+            appeal_open_deadline_ledger: 0,
+            appeals_count: 0,
+            appeal_deadline_ledger: 0,
+            appeal_approve_votes: 0,
+            appeal_reject_votes: 0,
+            status_history: soroban_sdk::Vec::new(&env),
         };
         storage::set_claim(&env, &claim);
         let loaded = storage::get_claim(&env, 1).expect("claim must exist");
@@ -219,7 +233,8 @@ fn full_claim_vote_flow_approve() {
     let voter2 = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
-        storage::set_policy(&env, &make_policy(&holder, 1));
+        let policy = make_policy(&holder, 1, &token_addr);
+        storage::set_policy(&env, &holder, 1, &policy);
         storage::add_voter(&env, &holder);
         storage::add_voter(&env, &voter2);
     });
@@ -249,13 +264,14 @@ fn full_claim_vote_flow_approve() {
 
 #[test]
 fn full_claim_vote_flow_reject() {
-    let (env, contract_id, _, _) = setup();
+    let (env, contract_id, _, token) = setup();
     let client = NiffyInsureClient::new(&env, &contract_id);
     let holder = Address::generate(&env);
     let voter2 = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
-        storage::set_policy(&env, &make_policy(&holder, 1));
+        let policy = make_policy(&holder, 1, &token);
+        storage::set_policy(&env, &holder, 1, &policy);
         storage::add_voter(&env, &holder);
         storage::add_voter(&env, &voter2);
     });
@@ -272,13 +288,14 @@ fn full_claim_vote_flow_reject() {
 
 #[test]
 fn duplicate_vote_is_rejected() {
-    let (env, contract_id, _, _) = setup();
+    let (env, contract_id, _, token) = setup();
     let client = NiffyInsureClient::new(&env, &contract_id);
     let holder = Address::generate(&env);
     let voter2 = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
-        storage::set_policy(&env, &make_policy(&holder, 1));
+        let policy = make_policy(&holder, 1, &token);
+        storage::set_policy(&env, &holder, 1, &policy);
         storage::add_voter(&env, &holder);
         storage::add_voter(&env, &voter2);
     });
@@ -295,13 +312,14 @@ fn duplicate_vote_is_rejected() {
 
 #[test]
 fn non_voter_cannot_vote() {
-    let (env, contract_id, _, _) = setup();
+    let (env, contract_id, _, token) = setup();
     let client = NiffyInsureClient::new(&env, &contract_id);
     let holder = Address::generate(&env);
     let outsider = Address::generate(&env);
 
     env.as_contract(&contract_id, || {
-        storage::set_policy(&env, &make_policy(&holder, 1));
+        let policy = make_policy(&holder, 1, &token);
+        storage::set_policy(&env, &holder, 1, &policy);
         storage::add_voter(&env, &holder);
         // outsider NOT added
     });
@@ -311,6 +329,202 @@ fn non_voter_cannot_vote() {
 
     let result = client.try_vote_on_claim(&outsider, &claim_id, &VoteOption::Approve);
     assert!(result.is_err());
+}
+
+// ── pagination: list_policies ─────────────────────────────────────────────────
+
+#[test]
+fn list_policies_empty_for_new_holder() {
+    let (env, contract_id, _, _) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+    let page = client.list_policies(&holder, &0u32, &10u32);
+    assert_eq!(page.len(), 0u32);
+}
+
+#[test]
+fn list_policies_first_page() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u32..=5 {
+            storage::set_policy(&env, &holder, id, &make_policy(&holder, id, &token));
+            env.storage().persistent().set(
+                &storage::DataKey::PolicyCounter(holder.clone()),
+                &id,
+            );
+        }
+    });
+
+    let page = client.list_policies(&holder, &0u32, &3u32);
+    assert_eq!(page.len(), 3u32);
+    assert_eq!(page.get(0).unwrap().policy_id, 1u32);
+    assert_eq!(page.get(2).unwrap().policy_id, 3u32);
+}
+
+#[test]
+fn list_policies_second_page_cursor() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u32..=5 {
+            storage::set_policy(&env, &holder, id, &make_policy(&holder, id, &token));
+            env.storage().persistent().set(
+                &storage::DataKey::PolicyCounter(holder.clone()),
+                &id,
+            );
+        }
+    });
+
+    let page = client.list_policies(&holder, &3u32, &10u32);
+    assert_eq!(page.len(), 2u32);
+    assert_eq!(page.get(0).unwrap().policy_id, 4u32);
+    assert_eq!(page.get(1).unwrap().policy_id, 5u32);
+}
+
+#[test]
+fn list_policies_cursor_past_end_returns_empty() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        storage::set_policy(&env, &holder, 1, &make_policy(&holder, 1, &token));
+        env.storage().persistent().set(
+            &storage::DataKey::PolicyCounter(holder.clone()),
+            &1u32,
+        );
+    });
+
+    let page = client.list_policies(&holder, &99u32, &10u32);
+    assert_eq!(page.len(), 0u32);
+}
+
+#[test]
+fn list_policies_limit_clamped_to_page_size_max() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u32..=25 {
+            storage::set_policy(&env, &holder, id, &make_policy(&holder, id, &token));
+            env.storage().persistent().set(
+                &storage::DataKey::PolicyCounter(holder.clone()),
+                &id,
+            );
+        }
+    });
+
+    let page = client.list_policies(&holder, &0u32, &100u32);
+    assert_eq!(page.len(), 20u32);
+}
+
+// ── pagination: list_claims ───────────────────────────────────────────────────
+
+fn make_claim(env: &Env, claim_id: u64, holder: &Address, asset: &Address) -> niffyinsure::types::Claim {
+    use niffyinsure::types::{Claim, ClaimStatus};
+    Claim {
+        claim_id,
+        policy_id: 1,
+        claimant: holder.clone(),
+        amount: 10_000_000,
+        asset: asset.clone(),
+        details: String::from_str(env, "test"),
+        image_urls: vec![env],
+        status: ClaimStatus::Processing,
+        voting_deadline_ledger: 1000,
+        approve_votes: 0,
+        reject_votes: 0,
+        filed_at: 1,
+        appeal_open_deadline_ledger: 0,
+        appeals_count: 0,
+        appeal_deadline_ledger: 0,
+        appeal_approve_votes: 0,
+        appeal_reject_votes: 0,
+        status_history: soroban_sdk::Vec::new(env),
+    }
+}
+
+#[test]
+fn list_claims_empty_when_none_filed() {
+    let (env, contract_id, _, _) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let page = client.list_claims(&0u64, &10u32);
+    assert_eq!(page.len(), 0u32);
+}
+
+#[test]
+fn list_claims_first_page() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u64..=5 {
+            storage::set_claim(&env, &make_claim(&env, id, &holder, &token));
+            env.storage().instance().set(&storage::DataKey::ClaimCounter, &id);
+        }
+    });
+
+    let page = client.list_claims(&0u64, &3u32);
+    assert_eq!(page.len(), 3u32);
+    assert_eq!(page.get(0).unwrap().claim_id, 1u64);
+    assert_eq!(page.get(2).unwrap().claim_id, 3u64);
+}
+
+#[test]
+fn list_claims_last_page_partial() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u64..=5 {
+            storage::set_claim(&env, &make_claim(&env, id, &holder, &token));
+            env.storage().instance().set(&storage::DataKey::ClaimCounter, &id);
+        }
+    });
+
+    let page = client.list_claims(&4u64, &10u32);
+    assert_eq!(page.len(), 1u32);
+    assert_eq!(page.get(0).unwrap().claim_id, 5u64);
+}
+
+#[test]
+fn list_claims_cursor_past_end_returns_empty() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        storage::set_claim(&env, &make_claim(&env, 1, &holder, &token));
+        env.storage().instance().set(&storage::DataKey::ClaimCounter, &1u64);
+    });
+
+    let page = client.list_claims(&999u64, &10u32);
+    assert_eq!(page.len(), 0u32);
+}
+
+#[test]
+fn list_claims_oversize_request_clamped() {
+    let (env, contract_id, _, token) = setup();
+    let client = NiffyInsureClient::new(&env, &contract_id);
+    let holder = Address::generate(&env);
+
+    env.as_contract(&contract_id, || {
+        for id in 1u64..=25 {
+            storage::set_claim(&env, &make_claim(&env, id, &holder, &token));
+            env.storage().instance().set(&storage::DataKey::ClaimCounter, &id);
+        }
+    });
+
+    let page = client.list_claims(&0u64, &999u32);
+    assert_eq!(page.len(), 20u32);
 }
 
 // ── counter immutability: generate_premium does not mutate storage ────────────

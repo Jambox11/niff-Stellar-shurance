@@ -1,9 +1,11 @@
 use soroban_sdk::{contracterror, Env, String, Vec};
 
 use crate::types::{
-    Claim, MultiplierTable, Policy, RiskInput, SAFETY_SCORE_MAX, DETAILS_MAX_LEN, IMAGE_URLS_MAX,
-    IMAGE_URL_MAX_LEN, REASON_MAX_LEN,
+    Claim, MultiplierTable, Policy, RiskInput, DETAILS_MAX_LEN, IMAGE_URLS_MAX, IMAGE_URL_MAX_LEN,
+    REASON_MAX_LEN, SAFETY_SCORE_MAX,
 };
+#[cfg(feature = "experimental")]
+use crate::types::{OracleSource, OracleTrigger, TriggerEventType, TriggerStatus};
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -44,6 +46,27 @@ pub enum Error {
     DuplicateOpenClaim = 33,
     ExcessiveEvidenceBytes = 34,
     PolicyNotFound = 35,
+    CalculatorNotSet = 36,
+    CalculatorCallFailed = 37,
+    CalculatorPaused = 38,
+    VotingWindowClosed = 39,
+    VotingWindowStillOpen = 40,
+    NotEligibleVoter = 41,
+    RateLimitExceeded = 42,
+    /// Appeal open window has passed; claimant can no longer appeal this claim.
+    AppealWindowClosed = 43,
+    /// An appeal is already open for this claim.
+    AppealAlreadyOpen = 44,
+    /// Claim has reached the maximum allowed appeals per claim.
+    MaxAppealsReached = 45,
+    /// Claim is not in Rejected status; cannot open an appeal.
+    ClaimNotRejected = 46,
+    /// No appeal is currently open; cannot vote on or finalize appeal.
+    AppealNotOpen = 47,
+    /// Appeal voting window is still open; cannot finalize appeal yet.
+    AppealWindowStillOpen = 48,
+    /// Admin `set_voting_duration_ledgers` value outside allowed [min, max] range.
+    VotingDurationOutOfBounds = 49,
 }
 
 pub fn check_policy(policy: &Policy) -> Result<(), Error> {
@@ -110,7 +133,6 @@ pub fn check_claim_open(claim: &Claim) -> Result<(), Error> {
     }
     Ok(())
 }
-
 
 // ═════════════════════════════════════════════════════════════════════════════
 // ORACLE / PARAMETRIC TRIGGER VALIDATION
@@ -226,7 +248,6 @@ pub fn check_oracle_trigger(
     }
 
     // 6. Check source is defined
-    use crate::types::OracleSource;
     if matches!(trigger.source, OracleSource::Undefined) {
         return Err(OracleError::SourceNotWhitelisted);
     }
@@ -333,4 +354,3 @@ pub fn check_multiplier_table_shape(table: &MultiplierTable) -> Result<(), Error
     }
     Ok(())
 }
-
