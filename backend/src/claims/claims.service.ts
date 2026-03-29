@@ -7,6 +7,7 @@ import { RedisService } from '../cache/redis.service';
 import { SanitizationService } from './sanitization.service';
 import { TenantContextService } from '../tenant/tenant-context.service';
 import { claimTenantWhere, assertTenantOwnership } from '../tenant/tenant-filter.helper';
+import { ReconciliationService } from '../indexer/reconciliation.service';
 import {
   ClaimDetailResponseDto,
   ClaimMetadataDto,
@@ -53,6 +54,7 @@ export class ClaimsService {
     private readonly config: ConfigService,
     private readonly soroban: SorobanService,
     private readonly tenantCtx: TenantContextService,
+    private readonly reconciliation: ReconciliationService,
   ) {
     this.cacheTtl = this.config.get<number>('CACHE_TTL_SECONDS', 60);
     this.ipfsGateway = this.config.get<string>('IPFS_GATEWAY', 'https://ipfs.io');
@@ -176,6 +178,10 @@ export class ClaimsService {
 
     const response = this.transformClaim(claim, lastLedger);
 
+    // Attach reconciliation status so the frontend can show a data-quality warning.
+    const reconStatus = await this.reconciliation.getClaimReconciliationStatus(id);
+    response.consistency.tallyReconciled = reconStatus.ok;
+
     if (!walletAddress) {
       await this.redis.set(cacheKey, response, this.cacheTtl);
       return response;
@@ -256,6 +262,7 @@ export class ClaimsService {
         indexerLag,
         lastIndexedLedger: lastLedger,
         isStale: indexerLag > this.maxAcceptableLag,
+        tallyReconciled: true, // overridden in getClaimById with live reconciliation check
       } as ConsistencyMetadataDto,
     };
   }

@@ -9,6 +9,10 @@ export const validationSchema = Joi.object({
     .required()
     .description("PostgreSQL connection URL"),
   REDIS_URL: Joi.string().required().description("Redis connection URL"),
+  STELLAR_NETWORK: Joi.string()
+    .valid('testnet', 'mainnet', 'futurenet')
+    .default('testnet')
+    .description('Active Stellar network'),
   SOROBAN_RPC_URL: Joi.string().required().description("Soroban RPC endpoint"),
   STELLAR_NETWORK: Joi.string()
     .default("testnet")
