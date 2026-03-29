@@ -92,6 +92,13 @@ impl NiffyInsure {
         storage::get_admin(&env)
     }
 
+    /// Read-only: balance of the default payout token held by this contract (payout reserve).
+    /// Matches funds available for `process_claim` for the configured default asset.
+    pub fn get_treasury_balance(env: Env) -> i128 {
+        let token_addr = storage::get_token(&env);
+        crate::token::get_balance(&env, &token_addr)
+    }
+
     /// Pure quote path: reads config and computes premium only.
     /// This entrypoint intentionally performs no persistent writes.
     pub fn generate_premium(
@@ -197,6 +204,16 @@ impl NiffyInsure {
     ) -> Result<u64, validate::Error> {
         holder.require_auth();
         claim::file_claim(&env, &holder, policy_id, amount, &details, &evidence)
+    }
+
+    /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).
+    pub fn withdraw_claim(
+        env: Env,
+        claimant: Address,
+        claim_id: u64,
+    ) -> Result<(), validate::Error> {
+        claimant.require_auth();
+        claim::withdraw_claim(&env, &claimant, claim_id)
     }
 
     /// Claimant-only: withdraw before any vote is cast (`Processing`, zero tallies).

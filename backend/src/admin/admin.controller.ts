@@ -155,6 +155,19 @@ export class AdminController {
   }
 
   /**
+   * GET /admin/solvency
+   *
+   * Latest snapshot from Redis only (no live Soroban call). Populated by the
+   * scheduled solvency job; may be null before the first successful run.
+   */
+  @Get('solvency')
+  @ApiOperation({ summary: 'Cached solvency snapshot for dashboard (Redis only)' })
+  async getSolvencySnapshot() {
+    const snapshot = await this.solvencyMonitoringService.getLatestSnapshot();
+    return { snapshot };
+  }
+
+  /**
    * PATCH /admin/feature-flags/:key
    *
    * Toggles a feature flag on or off.

@@ -112,6 +112,21 @@ describe('AdminController', () => {
     });
   });
 
+  describe('GET /admin/solvency', () => {
+    it('returns snapshot from cache service only', async () => {
+      const snap = {
+        status: 'ok' as const,
+        checkedAt: '2026-01-01T00:00:00.000Z',
+        thresholdStroops: '0',
+        alertEmitted: false,
+      };
+      mockSolvencyMonitoringService.getLatestSnapshot.mockResolvedValue(snap);
+      const result = await controller.getSolvencySnapshot();
+      expect(result).toEqual({ snapshot: snap });
+      expect(mockSolvencyMonitoringService.getLatestSnapshot).toHaveBeenCalled();
+    });
+  });
+
   describe('GET /admin/audits', () => {
     it('returns paginated audit logs', async () => {
       mockAuditService.findAll.mockResolvedValue({ items: [], total: 0, page: 1, limit: 20 });
