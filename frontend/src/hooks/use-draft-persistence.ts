@@ -14,6 +14,8 @@ interface DraftWrapper<T> {
 /**
  * Persists form state to localStorage with a TTL and schema versioning.
  * Filters out non-serializable objects (like File or IPFS blobs).
+ * 
+ * Note: Drafts are device-local and are NOT synced across sessions or devices.
  *
  * @param formKey Unique key for storage
  * @param schemaVersion Version of the form schema (mismatches clear draft)
