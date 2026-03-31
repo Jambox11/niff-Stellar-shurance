@@ -9,6 +9,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { WalletProvider, NetworkMismatchModal } from "@/features/wallet";
 import { inter, ibmPlexMono } from "@/lib/fonts";
 import { QueryProvider } from "@/lib/query";
+import { NetworkBanner } from "@/components/ui/network-banner";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -86,6 +87,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <ThemeProvider defaultTheme="system" storageKey="niffyinsur-theme">
           <QueryProvider>
             <WalletProvider>
+              <NetworkBanner />
               {children}
               <CookieConsentBanner />
               <NetworkMismatchModal />
