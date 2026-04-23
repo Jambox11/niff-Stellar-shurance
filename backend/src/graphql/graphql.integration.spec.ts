@@ -18,6 +18,7 @@ import { AuthIdentityService } from '../auth/auth-identity.service';
 import { RedisService } from '../cache/redis.service';
 import request from 'supertest';
 import jwt from 'jsonwebtoken';
+import depthLimit from 'graphql-depth-limit';
 import type { GraphqlRequest } from './graphql.context';
 
 const configValues: Record<string, unknown> = {
@@ -138,6 +139,7 @@ describe('GraphQL integration', () => {
           plugins: [
             createGraphqlSecurityPlugin(operationGuard, metrics, logger, 1_000),
           ],
+          validationRules: [depthLimit(configValues.GRAPHQL_MAX_DEPTH as number)],
         }),
       ],
       providers: [
@@ -174,6 +176,91 @@ describe('GraphQL integration', () => {
     if (app) {
       await app.close();
     }
+  });
+
+  it('batches claim -> policy lookups in O(1) DB round trips', async () => {
+    claimsServiceMock.listClaims.mockResolvedValue({
+      data: [claimDto(1, 'GHOLDER:1'), claimDto(2, 'GHOLDER:2')],
+      pagination: { next_cursor: null, total: 2 },
+    });
+
+    const policyMap = new Map([
+      ['GHOLDER:1', {
+        id: 'GHOLDER:1', policyId: 1, holderAddress: 'GHOLDER', policyType: 'CROP',
+        region: 'NG-LA', coverageAmount: '5000', premium: '100', isActive: true,
+        startLedger: 1, endLedger: 100, assetContractId: null,
+        createdAt: new Date(), updatedAt: new Date(),
+      }],
+      ['GHOLDER:2', {
+        id: 'GHOLDER:2', policyId: 2, holderAddress: 'GHOLDER', policyType: 'AUTO',
+        region: 'NG-LA', coverageAmount: '9000', premium: '250', isActive: true,
+        startLedger: 2, endLedger: 200, assetContractId: null,
+        createdAt: new Date(), updatedAt: new Date(),
+      }],
+    ]);
+    policyReadServiceMock.getPoliciesByIds.mockResolvedValue(policyMap);
+
+    const response = await request(app.getHttpServer())
+      .post('/api/graphql')
+      .send({
+        query: `
+          query {
+            claims(first: 2) {
+              items {
+                id
+                policy {
+                  id
+                  policyType
+                }
+              }
+            }
+          }
+        `,
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.errors).toBeUndefined();
+    // KEY ASSERTION: exactly 1 DB call for all claims' policies (O(1) round trips)
+    expect(policyReadServiceMock.getPoliciesByIds).toHaveBeenCalledTimes(1);
+  });
+
+  it('clamps nested claims first arg to GRAPHQL_POLICY_CLAIMS_MAX_LIMIT', async () => {
+    policyReadServiceMock.listPolicies.mockResolvedValue({
+      items: [{
+        id: 'GHOLDER:1', policyId: 1, holderAddress: 'GHOLDER', policyType: 'CROP',
+        region: 'NG-LA', coverageAmount: '5000', premium: '100', isActive: true,
+        startLedger: 1, endLedger: 100, assetContractId: null,
+        createdAt: new Date(), updatedAt: new Date(),
+      }],
+      nextCursor: null,
+      total: 1,
+    });
+    claimsServiceMock.getClaimsByPolicyIds.mockResolvedValue(
+      new Map([['GHOLDER:1', [claimDto(1, 'GHOLDER:1')]]]),
+    );
+
+    await request(app.getHttpServer())
+      .post('/api/graphql')
+      .send({
+        query: `
+          query {
+            policies(first: 1) {
+              items {
+                id
+                claims(first: 9999) {
+                  id
+                }
+              }
+            }
+          }
+        `,
+      });
+
+    // first=9999 must be clamped to GRAPHQL_POLICY_CLAIMS_MAX_LIMIT=25
+    expect(claimsServiceMock.getClaimsByPolicyIds).toHaveBeenCalledWith(
+      ['GHOLDER:1'],
+      25,
+    );
   });
 
   it('batches policy -> claims lookups instead of devolving into N+1 queries', async () => {

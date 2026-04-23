@@ -1,4 +1,4 @@
-import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { Module, MiddlewareConsumer, NestModule, RequestMethod } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { TerminusModule } from '@nestjs/terminus';
 import { ThrottlerModule, ThrottlerStorage } from '@nestjs/throttler';
@@ -29,6 +29,13 @@ import { AppLoggerService } from './common/logger/app-logger.service';
 import { OracleHooksController } from './experimental/oracle-hooks.controller';
 import { BetaCalculatorsController } from './experimental/beta-calculators.controller';
 import { IdempotencyMiddleware } from './common/middleware/idempotency.middleware';
+
+/** Mutation routes that require idempotency key support (issue #363). */
+const IDEMPOTENCY_ROUTES = [
+  { path: 'claims', method: RequestMethod.POST },
+  { path: 'policies', method: RequestMethod.POST },
+  { path: 'tx/submit', method: RequestMethod.POST },
+];
 
 @Module({
   imports: [
@@ -77,5 +84,7 @@ import { IdempotencyMiddleware } from './common/middleware/idempotency.middlewar
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
     consumer.apply(RequestContextMiddleware).forRoutes('*');
+    // Apply idempotency middleware to all mutation endpoints (issue #363)
+    consumer.apply(IdempotencyMiddleware).forRoutes(...IDEMPOTENCY_ROUTES);
   }
 }
