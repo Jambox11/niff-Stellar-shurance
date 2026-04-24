@@ -10,6 +10,7 @@ import {
   initDeploymentRegistry,
   isWarningRow,
 } from '../events/parser-registry';
+import { ClaimEventsService } from '../events/claim-events.service';
 import { rpc as SorobanRpc, scValToNative } from '@stellar/stellar-sdk';
 import { tryNormalizeAddress } from '../common/utils/normalize-address';
 
@@ -92,6 +93,7 @@ export class IndexerService {
     private readonly soroban: SorobanService,
     private readonly config: ConfigService,
     @Optional() private readonly metrics?: MetricsService,
+    @Optional() private readonly claimEvents?: ClaimEventsService,
   ) {
     this.networkId = this.config.get<string>('STELLAR_NETWORK', 'testnet');
     this.gapThresholdLedgers = this.config.get<number>('INDEXER_GAP_ALERT_THRESHOLD_LEDGERS', 100);
@@ -400,6 +402,13 @@ export class IndexerService {
         imageUrls: getStringArray(data.image_urls),
       },
     });
+
+    await this.claimEvents?.publish({
+      claimId: String(claimId),
+      status: 'PENDING',
+      updatedAt: new Date().toISOString(),
+      ledger: event.ledger,
+    });
   }
 
   private async handleVoteCast(
@@ -440,6 +449,13 @@ export class IndexerService {
         rejectVotes: getNumberValue(data.reject_votes),
       },
     });
+
+    await this.claimEvents?.publish({
+      claimId: String(claimId),
+      status: 'VOTING',
+      updatedAt: new Date().toISOString(),
+      ledger: event.ledger,
+    });
   }
 
   private async handleClaimProcessed(tx: IndexerTx, data: EventPayload, event: SorobanEvent) {
@@ -451,6 +467,13 @@ export class IndexerService {
         paidAt: new Date(event.ledgerClosedAt),
         updatedAtLedger: event.ledger,
       },
+    });
+
+    await this.claimEvents?.publish({
+      claimId: String(claimId),
+      status: 'PAID',
+      updatedAt: new Date(event.ledgerClosedAt).toISOString(),
+      ledger: event.ledger,
     });
   }
 }
