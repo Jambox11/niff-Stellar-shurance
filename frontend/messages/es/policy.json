@@ -1,0 +1,32 @@
+{
+  "quote": {
+    "title": "Obtener Cotización de Seguro",
+    "subtitle": "Calcula tu prima para cobertura de seguro de contratos inteligentes en la red Stellar.",
+    "howItWorks": "Cómo Funciona",
+    "step1Title": "1. Proporciona Detalles",
+    "step1Desc": "Ingresa la dirección de tu contrato, monto de cobertura y factores de riesgo.",
+    "step2Title": "2. Obtén Cotización",
+    "step2Desc": "Nuestro algoritmo calcula tu prima basándose en la evaluación de riesgo.",
+    "step3Title": "3. Compra la Póliza",
+    "step3Desc": "Acepta la cotización y paga la prima para activar la cobertura."
+  },
+  "coverage": {
+    "premium": "Prima",
+    "premiumAmount": "Prima: {amount} XLM",
+    "coverageAmount": "Monto de Cobertura",
+    "expiry": "Vencimiento de Póliza",
+    "active": "Activa",
+    "expired": "Vencida",
+    "pending": "Pendiente",
+    "renewalWindow": "La renovación abre {days} días antes del vencimiento",
+    "gracePeriod": "Período de gracia: renueva hasta {days} día(s) después del vencimiento sin interrupción de cobertura",
+    "gracePeriodCountdown": "El período de gracia termina en {ledgers} ledgers (~{minutes} min)",
+    "renewalLedgerNote": "La cuenta regresiva usa números de secuencia de ledger (1 ledger ≈ 5 s). El último ledger válido de renovación es vencimiento + gracia − 1."
+  },
+  "coverageTier": {
+    "label": "Nivel de Cobertura",
+    "Basic": "Básico",
+    "Standard": "Estándar",
+    "Premium": "Premium"
+  }
+}

@@ -1,57 +1,61 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { PrismaClient } from '@prisma/client';
+import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { PrismaService } from '../prisma/prisma.service';
 
 /**
- * Scheduled cleanup service for soft-deleted rows.
+ * Permanently removes materialized indexer rows that were soft-deleted longer
+ * ago than DATA_RETENTION_DAYS. Idempotent and safe under concurrent ingestion:
+ * only rows with non-null `deletedAt <= cutoff` are affected; live rows stay.
  *
- * Rows with `deletedAt` older than DATA_RETENTION_DAYS are permanently removed.
- * The job runs once on startup and then on the interval defined by
- * DATA_RETENTION_INTERVAL_MS (default: 24 h).
- *
- * Environment variables
- * ---------------------
- * DATA_RETENTION_DAYS          – retention window in days (default: 90)
- * DATA_RETENTION_INTERVAL_MS   – cleanup interval in ms   (default: 86400000 = 24 h)
+ * Does not touch `raw_events` (append-only / reindex).
  */
 @Injectable()
-export class DataRetentionService implements OnModuleInit {
+export class DataRetentionService {
   private readonly logger = new Logger(DataRetentionService.name);
-  private readonly retentionDays: number;
-  private readonly intervalMs: number;
 
-  constructor(private readonly prisma: PrismaClient) {
-    this.retentionDays = parseInt(process.env.DATA_RETENTION_DAYS ?? '90', 10);
-    this.intervalMs = parseInt(process.env.DATA_RETENTION_INTERVAL_MS ?? String(24 * 60 * 60 * 1000), 10);
-  }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
-  onModuleInit(): void {
-    // Run immediately, then on a recurring interval
-    this.runCleanup();
-    setInterval(() => this.runCleanup(), this.intervalMs);
-  }
-
-  /** Permanently deletes rows soft-deleted more than retentionDays ago. */
-  async runCleanup(): Promise<void> {
-    const cutoff = new Date(Date.now() - this.retentionDays * 24 * 60 * 60 * 1000);
-    this.logger.log(`Running retention cleanup: permanently removing rows deleted before ${cutoff.toISOString()}`);
-
-    try {
-      // Delete in dependency order (votes → claims → policies)
-      const votes = await this.prisma.vote.deleteMany({
-        where: { deletedAt: { not: null, lt: cutoff } },
-      });
-      const claims = await this.prisma.claim.deleteMany({
-        where: { deletedAt: { not: null, lt: cutoff } },
-      });
-      const policies = await this.prisma.policy.deleteMany({
-        where: { deletedAt: { not: null, lt: cutoff } },
-      });
-
+  @Cron(CronExpression.EVERY_DAY_AT_4AM)
+  async scheduledPurge(): Promise<void> {
+    const days = this.config.get<number>('DATA_RETENTION_DAYS', 730);
+    const cutoff = this.computeCutoff(days);
+    const summary = await this.purgeMaterializedRowsDeletedBefore(cutoff);
+    if (summary.policies + summary.claims + summary.votes > 0) {
       this.logger.log(
-        `Cleanup complete: removed ${votes.count} votes, ${claims.count} claims, ${policies.count} policies`,
+        `Data retention purge: policies=${summary.policies} claims=${summary.claims} votes=${summary.votes} (cutoff=${cutoff.toISOString()})`,
       );
-    } catch (err) {
-      this.logger.error('Retention cleanup failed', (err as Error).stack);
     }
+  }
+
+  computeCutoff(retentionDays: number): Date {
+    const ms = retentionDays * 86_400_000;
+    return new Date(Date.now() - ms);
+  }
+
+  /**
+   * Hard-delete soft-deleted materialized rows at or before `cutoff`.
+   * FK order: votes → claims → policies.
+   */
+  async purgeMaterializedRowsDeletedBefore(cutoff: Date): Promise<{
+    votes: number;
+    claims: number;
+    policies: number;
+  }> {
+    return this.prisma.$transaction(async (tx) => {
+      const vr = await tx.vote.deleteMany({
+        where: { deletedAt: { lte: cutoff } },
+      });
+      const cr = await tx.claim.deleteMany({
+        where: { deletedAt: { lte: cutoff } },
+      });
+      const pr = await tx.policy.deleteMany({
+        where: { deletedAt: { lte: cutoff } },
+      });
+      return { votes: vr.count, claims: cr.count, policies: pr.count };
+    });
   }
 }
