@@ -10,6 +10,7 @@ import {
   initDeploymentRegistry,
   isWarningRow,
 } from '../events/parser-registry';
+import { QuoteSimulationCacheService } from '../quote/quote-simulation-cache.service';
 import { rpc as SorobanRpc, scValToNative } from '@stellar/stellar-sdk';
 import { tryNormalizeAddress } from '../common/utils/normalize-address';
 
@@ -92,6 +93,7 @@ export class IndexerService {
     private readonly soroban: SorobanService,
     private readonly config: ConfigService,
     @Optional() private readonly metrics?: MetricsService,
+    @Optional() private readonly quoteSimulationCache?: QuoteSimulationCacheService,
   ) {
     this.networkId = this.config.get<string>('STELLAR_NETWORK', 'testnet');
     this.gapThresholdLedgers = this.config.get<number>('INDEXER_GAP_ALERT_THRESHOLD_LEDGERS', 100);
@@ -321,6 +323,8 @@ export class IndexerService {
         (mainTopic === 'niffyinsure' && subTopic === 'claim_paid')
       ) {
         await this.handleClaimProcessed(tx, dataNative, event);
+      } else if (mainTopic === 'niffyins' && subTopic === 'tbl_upd') {
+        await this.handlePremiumTableUpdated();
       }
 
       await this.advanceCursorInTx(tx, network, event.ledger);
@@ -452,5 +456,15 @@ export class IndexerService {
         updatedAtLedger: event.ledger,
       },
     });
+  }
+
+  /**
+   * On-chain `tbl_upd` means the premium multiplier table was updated.
+   * Flush the entire quote simulation cache so subsequent requests
+   * re-simulate against the new on-chain multipliers.
+   */
+  private async handlePremiumTableUpdated(): Promise<void> {
+    await this.quoteSimulationCache?.invalidateAll();
+    this.logger.log('Quote simulation cache invalidated after tbl_upd event');
   }
 }
