@@ -8,10 +8,10 @@ import { ReconciliationService } from './reconciliation.service';
 import { PrismaModule } from '../prisma/prisma.module';
 import { RpcModule } from '../rpc/rpc.module';
 import { MetricsModule } from '../metrics/metrics.module';
-import { QuoteModule } from '../quote/quote.module';
+import { EventsModule } from '../events/events.module';
 
 @Module({
-  imports: [PrismaModule, RpcModule, ConfigModule, ScheduleModule.forFeature(), QuoteModule],
+  imports: [PrismaModule, RpcModule, ConfigModule, ScheduleModule.forFeature(), EventsModule],
   providers: [IndexerService, IndexerWorker, ReindexWorkerService, ReconciliationService],
   exports: [IndexerService, ReconciliationService],
 })
