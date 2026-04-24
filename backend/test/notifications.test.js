@@ -2,13 +2,18 @@ const { InMemoryNotificationPreferencesRepository } = require("../dist/notificat
 const { NotificationsService } = require("../dist/notifications/notifications.service");
 const { InMemoryNotificationDispatcher } = require("../dist/notifications/notification-dispatcher");
 const { NotificationJobsService } = require("../dist/jobs/notification-jobs.service");
+const { ConfigService } = require("@nestjs/config");
+
+function createNotificationsService(repository) {
+  return new NotificationsService(new ConfigService(), repository);
+}
 
 describe("NotificationsService", () => {
   it("applies defaults when a user has no row", async () => {
     const repository = new InMemoryNotificationPreferencesRepository();
-    const service = new NotificationsService(repository);
+    const service = createNotificationsService(repository);
 
-    await expect(service.getPreferences("user-1")).resolves.toEqual({
+    await expect(service.getUserNotificationPreferences("user-1")).resolves.toEqual({
       renewalRemindersEnabled: true,
       claimUpdatesEnabled: true,
     });
@@ -21,9 +26,9 @@ describe("NotificationsService", () => {
       renewalRemindersEnabled: null,
       claimUpdatesEnabled: false,
     });
-    const service = new NotificationsService(repository);
+    const service = createNotificationsService(repository);
 
-    await expect(service.getPreferences("user-2")).resolves.toEqual({
+    await expect(service.getUserNotificationPreferences("user-2")).resolves.toEqual({
       renewalRemindersEnabled: true,
       claimUpdatesEnabled: false,
     });
@@ -31,13 +36,13 @@ describe("NotificationsService", () => {
 
   it("merges partial updates without dropping untouched preferences", async () => {
     const repository = new InMemoryNotificationPreferencesRepository();
-    const service = new NotificationsService(repository);
+    const service = createNotificationsService(repository);
 
-    await service.updatePreferences("user-3", {
+    await service.updateUserNotificationPreferences("user-3", {
       claimUpdatesEnabled: false,
     });
 
-    await expect(service.getPreferences("user-3")).resolves.toEqual({
+    await expect(service.getUserNotificationPreferences("user-3")).resolves.toEqual({
       renewalRemindersEnabled: true,
       claimUpdatesEnabled: false,
     });
@@ -47,14 +52,14 @@ describe("NotificationsService", () => {
 describe("NotificationJobsService", () => {
   it("blocks renewal reminders when the preference is disabled", async () => {
     const repository = new InMemoryNotificationPreferencesRepository();
-    const notificationsService = new NotificationsService(repository);
+    const notificationsService = createNotificationsService(repository);
     const dispatcher = new InMemoryNotificationDispatcher();
     const jobsService = new NotificationJobsService(
       notificationsService,
       dispatcher,
     );
 
-    await notificationsService.updatePreferences("user-4", {
+    await notificationsService.updateUserNotificationPreferences("user-4", {
       renewalRemindersEnabled: false,
     });
 
@@ -72,7 +77,7 @@ describe("NotificationJobsService", () => {
 
   it("sends claim updates when the preference is enabled", async () => {
     const repository = new InMemoryNotificationPreferencesRepository();
-    const notificationsService = new NotificationsService(repository);
+    const notificationsService = createNotificationsService(repository);
     const dispatcher = new InMemoryNotificationDispatcher();
     const jobsService = new NotificationJobsService(
       notificationsService,

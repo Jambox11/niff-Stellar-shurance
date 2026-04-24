@@ -1,24 +1,25 @@
 // @ts-check
 import eslint from "@eslint/js";
-import tsParser from "@typescript-eslint/parser";
-import tsPlugin from "@typescript-eslint/eslint-plugin";
+import tseslint from "typescript-eslint";
 
-export default [
-  eslint.configs.recommended,
+export default tseslint.config(
+  // Global ignores
   {
-    files: ["src/**/*.ts"],
-    languageOptions: {
-      parser: tsParser,
-      parserOptions: {
-        ecmaVersion: "latest",
-        sourceType: "module",
-      },
-    },
-    plugins: {
-      "@typescript-eslint": tsPlugin,
-    },
-    rules: {
-      ...tsPlugin.configs.recommended.rules,
-    },
+    ignores: ["dist/**", "dist-test/**", "node_modules/**"],
   },
-];
+  // JS recommended for all files
+  eslint.configs.recommended,
+  // TypeScript rules — type-unaware (no parserOptions.project needed)
+  // Using recommendedTypeChecked requires a tsconfig; skip for now to keep
+  // CI fast. Switch to recommendedTypeChecked once tsconfig paths are stable.
+  ...tseslint.configs.recommended,
+  // Override rules that are noisy during early development
+  {
+    rules: {
+      // Allow void-returning async handlers in express routes
+      "@typescript-eslint/no-floating-promises": "off",
+      // Allow empty catch blocks with a comment
+      "no-empty": ["error", { allowEmptyCatch: true }],
+    },
+  }
+);
