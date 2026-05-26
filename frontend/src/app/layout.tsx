@@ -11,6 +11,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { WalletProvider, NetworkMismatchModal } from "@/features/wallet";
 import { inter, ibmPlexMono } from "@/lib/fonts";
 import { QueryProvider } from "@/lib/query";
+import { BottomTabBar } from "@/components/nav/BottomTabBar";
 import { NetworkBanner } from "@/components/ui/network-banner";
 
 export const viewport: Viewport = {
@@ -109,7 +110,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           }}
         />
       </head>
-      <body className="font-sans antialiased">
+      <body className="font-sans antialiased pb-16 md:pb-0">
         <ThemeProvider defaultTheme="system" storageKey="niffyinsur-theme">
           <QueryProvider>
             <WalletProvider>
@@ -121,6 +122,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
               <CookieConsentBanner />
               <NetworkMismatchModal />
               <Toaster />
+              <BottomTabBar />
             </WalletProvider>
           </QueryProvider>
         </ThemeProvider>
