@@ -30,6 +30,7 @@ import { BackfillDto } from './dto/backfill.dto';
 import { AuditQueryDto } from './dto/audit-query.dto';
 import { FeatureFlagDto } from './dto/feature-flag.dto';
 import { SetRateLimitDto, EnableOverrideDto } from './dto/rate-limit.dto';
+import { BulkUpdateClaimsDto, BULK_UPDATE_MAX_BATCH } from './dto/bulk-update-claims.dto';
 import { PrivacyService, PrivacyRequestType } from '../maintenance/privacy.service';
 import { RateLimitService } from '../rate-limit/rate-limit.service';
 import { QueueMonitorService } from '../queues/queue-monitor.service';
@@ -418,5 +419,35 @@ export class AdminController {
       ipAddress: req.ip,
     });
     return { queue, jobId, status: 'retried' };
+  }
+
+  /**
+   * POST /admin/claims/bulk-update
+   *
+   * Batch-transitions claim statuses with mandatory reason and audit trail.
+   * Dry-run mode returns affected claims without modifying data.
+   * Capped at BULK_UPDATE_MAX_BATCH (100) claims per request.
+   */
+  @Post('claims/bulk-update')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: `Bulk update claim statuses (max ${BULK_UPDATE_MAX_BATCH} per request)` })
+  async bulkUpdateClaims(@Body() dto: BulkUpdateClaimsDto, @Req() req: AdminRequest) {
+    const actor = req.user?.walletAddress ?? 'unknown';
+    const result = await this.adminService.bulkUpdateClaims(
+      dto.claimIds,
+      dto.newStatus,
+      dto.reason,
+      actor,
+      dto.dryRun ?? false,
+    );
+    if (!dto.dryRun) {
+      await this.auditService.write({
+        actor,
+        action: 'bulk_claim_status_update',
+        payload: { claimIds: dto.claimIds, newStatus: dto.newStatus, reason: dto.reason, affectedCount: result.affectedCount },
+        ipAddress: req.ip,
+      });
+    }
+    return result;
   }
 }

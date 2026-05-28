@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { FeatureFlagsService } from '../feature-flags/feature-flags.service';
 import { Queue } from 'bullmq';
 import { getBullMQConnection } from '../redis/client';
+import { ClaimStatus } from '@prisma/client';
 
 export interface BackfillJobInfo {
   jobId: string;
@@ -128,5 +129,46 @@ export class AdminService {
 
   async getFeatureFlags() {
     return this.prisma.featureFlag.findMany({ orderBy: { key: 'asc' } });
+  }
+
+  /**
+   * Bulk update claim statuses. In dry-run mode returns affected claims without
+   * modifying data. In live mode applies updates in a single DB transaction and
+   * logs each update to admin_audit_log.
+   */
+  async bulkUpdateClaims(
+    claimIds: number[],
+    newStatus: ClaimStatus,
+    reason: string,
+    actor: string,
+    dryRun: boolean,
+  ) {
+    const affected = await this.prisma.claim.findMany({
+      where: { id: { in: claimIds }, deletedAt: null },
+      select: { id: true, status: true, policyId: true },
+    });
+
+    if (dryRun) {
+      return { dryRun: true, affectedCount: affected.length, affected };
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.claim.updateMany({
+        where: { id: { in: affected.map((c) => c.id) } },
+        data: { status: newStatus },
+      });
+      for (const claim of affected) {
+        await tx.adminAuditLog.create({
+          data: {
+            actor,
+            action: 'bulk_claim_status_update',
+            payload: { claimId: claim.id, fromStatus: claim.status, toStatus: newStatus, reason },
+          },
+        });
+      }
+    });
+
+    this.logger.log(`Bulk updated ${affected.length} claims to ${newStatus} by ${actor}`);
+    return { dryRun: false, affectedCount: affected.length, affected };
   }
 }
