@@ -25,6 +25,8 @@ function getStatusVariant(status: ClaimDetailResponse['metadata']['status']) {
       return 'success'
     case 'rejected':
       return 'destructive'
+    case 'appeal':
+      return 'warning'
     case 'pending':
     default:
       return 'info'
@@ -233,40 +235,45 @@ export function ClaimDetailView({ claimId }: ClaimDetailViewProps) {
           </CardContent>
         </Card>
 
-        {claim.metadata.status === 'approved' && claim.payout_deadline_ledger != null && (
+        {claim.metadata.status === 'appeal' && claim.appeal && (
           <Card>
             <CardHeader>
-              <CardTitle>Payout countdown</CardTitle>
-              <CardDescription>
-                Time remaining before the payout deadline. If payout is not executed before this ledger, the claim may time out.
-              </CardDescription>
+              <CardTitle>Appeal in progress</CardTitle>
+              <CardDescription>This claim is under appeal review with elevated quorum requirements.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Payout deadline ledger</p>
-                  <p className="text-lg font-semibold tabular-nums">{claim.payout_deadline_ledger.toLocaleString()}</p>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="rounded-xl border bg-amber-50 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Appeal round</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">{claim.appeal.appealRound}</p>
                 </div>
-                <div>
-                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Current ledger</p>
-                  <p className="text-lg font-semibold tabular-nums">{latestLedger?.toLocaleString() ?? '—'}</p>
+                <div className="rounded-xl border bg-amber-50 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Elevated quorum</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">
+                    {(claim.appeal.elevatedQuorumBps / 100).toFixed(2)}%
+                  </p>
+                  <p className="text-xs text-muted-foreground">{claim.appeal.elevatedQuorumBps} bps</p>
+                </div>
+                <div className="rounded-xl border bg-amber-50 p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Appeal deadline ledger</p>
+                  <p className="mt-2 text-2xl font-semibold tabular-nums">{claim.appeal.appealVotingDeadlineLedger}</p>
                 </div>
               </div>
-              <div className="rounded-xl border bg-emerald-50 p-4">
+              {claim.appeal.appealVotingDeadlineTime && (
+                <div className="rounded-xl border bg-muted p-4">
+                  <p className="text-xs uppercase tracking-[0.16em] text-muted-foreground">Appeal voting deadline</p>
+                  <p className="mt-1 text-sm font-medium">{formatTimestamp(claim.appeal.appealVotingDeadlineTime)}</p>
+                </div>
+              )}
+              <div className="rounded-xl border bg-muted p-4">
                 {latestLedger !== null ? (
-                  latestLedger < claim.payout_deadline_ledger ? (
-                    <div className="flex items-center justify-between gap-4">
-                      <span className="text-sm font-medium text-emerald-800">Time until payout deadline</span>
-                      <DeadlineCountdown
-                        deadlineLedger={claim.payout_deadline_ledger}
-                        currentLedger={latestLedger}
-                      />
-                    </div>
-                  ) : (
-                    <p className="text-sm font-medium text-red-700">
-                      Payout deadline has passed. The claim may be moved to timeout status.
-                    </p>
-                  )
+                  <div className="flex items-center justify-between gap-4">
+                    <span className="text-sm font-medium text-muted-foreground">Time remaining for appeal vote</span>
+                    <DeadlineCountdown
+                      deadlineLedger={claim.appeal.appealVotingDeadlineLedger}
+                      currentLedger={latestLedger}
+                    />
+                  </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">Fetching latest ledger…</p>
                 )}
