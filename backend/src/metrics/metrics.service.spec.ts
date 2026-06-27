@@ -56,3 +56,36 @@ describe('MetricsService — http_request_duration_seconds histogram', () => {
     expect(metrics).toContain('le="1"');
   });
 });
+
+describe('MetricsService — bullmq_queue_active_workers gauge (#874)', () => {
+  let service: MetricsService;
+
+  beforeEach(() => {
+    service = new MetricsService();
+  });
+
+  it('gauge is registered with queue label', () => {
+    expect(service.queueActiveWorkers).toBeDefined();
+    expect(() =>
+      service.recordQueueActiveWorkers({ queue: 'tx-submit', count: 2 }),
+    ).not.toThrow();
+  });
+
+  it('recordQueueActiveWorkers sets gauge value per queue', async () => {
+    service.recordQueueActiveWorkers({ queue: 'tx-submit', count: 1 });
+    service.recordQueueActiveWorkers({ queue: 'claim-events', count: 3 });
+    const metrics = await service.getMetrics();
+    expect(metrics).toContain('bullmq_queue_active_workers');
+    expect(metrics).toContain('queue="tx-submit"');
+    expect(metrics).toContain('queue="claim-events"');
+  });
+
+  it('gauge value reflects latest update', async () => {
+    service.recordQueueActiveWorkers({ queue: 'tx-submit', count: 0 });
+    service.recordQueueActiveWorkers({ queue: 'tx-submit', count: 5 });
+    const metrics = await service.getMetrics();
+    // Should contain 5, not 0
+    const txSubmitMatch = metrics.match(/bullmq_queue_active_workers\{queue="tx-submit"\}\s+(\d+)/);
+    expect(txSubmitMatch?.[1]).toBe('5');
+  });
+});

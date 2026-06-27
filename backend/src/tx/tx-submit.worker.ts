@@ -3,29 +3,56 @@ import { Worker, Job } from 'bullmq';
 import { ConfigService } from '@nestjs/config';
 import { getBullMQConnection } from '../redis/client';
 import { TX_SUBMIT_QUEUE } from '../queues/names';
+import { getQueueConcurrency } from '../queues/queue-config';
 import { TxSubmitJobData } from './tx-submit.queue';
 import { rpc as SorobanRpc, TransactionBuilder } from '@stellar/stellar-sdk';
+import { MetricsService } from '../metrics/metrics.service';
 
 @Injectable()
 export class TxSubmitWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(TxSubmitWorker.name);
   private worker!: Worker<TxSubmitJobData>;
+  private metricsInterval?: NodeJS.Timer;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(
+    private readonly config: ConfigService,
+    private readonly metrics: MetricsService,
+  ) {}
 
   onModuleInit() {
+    const concurrencyMap = this.config.get<string>('QUEUE_CONCURRENCY_MAP', '');
+    const concurrency = getQueueConcurrency('tx-submit', concurrencyMap);
+
     this.worker = new Worker<TxSubmitJobData>(
       TX_SUBMIT_QUEUE,
       async (job: Job<TxSubmitJobData>) => this.process(job),
-      { connection: getBullMQConnection(), concurrency: 5 },
+      { connection: getBullMQConnection(), concurrency },
     );
+
     this.worker.on('failed', (job, err) =>
       this.logger.error(`TX job ${job?.id} failed: ${err.message}`),
     );
+
+    this.metricsInterval = setInterval(() => this.emitQueueMetrics(), 10_000);
+    this.emitQueueMetrics();
   }
 
   async onModuleDestroy() {
+    if (this.metricsInterval) {
+      clearInterval(this.metricsInterval);
+    }
     await this.worker.close();
+  }
+
+  private async emitQueueMetrics(): Promise<void> {
+    try {
+      const counts = await this.worker.getCountsPerState();
+      const active = counts.active ?? 0;
+      this.metrics.recordQueueActiveWorkers({ queue: TX_SUBMIT_QUEUE, count: active });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.warn(`Failed to emit queue metrics for ${TX_SUBMIT_QUEUE}: ${msg}`);
+    }
   }
 
   private async process(job: Job<TxSubmitJobData>) {

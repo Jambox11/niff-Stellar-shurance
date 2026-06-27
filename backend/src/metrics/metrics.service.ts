@@ -31,6 +31,7 @@ export class MetricsService implements OnModuleInit {
   // ── Queue / DLQ metrics ───────────────────────────────────────────────────
   readonly dlqDepth: client.Gauge<string>;
   readonly dlqJobFailed: client.Counter<string>;
+  readonly queueActiveWorkers: client.Gauge<string>;
 
   // ── Indexer / observability metrics ───────────────────────────────────────
   readonly indexerLag: client.Gauge<string>;
@@ -131,6 +132,13 @@ export class MetricsService implements OnModuleInit {
       name: 'bullmq_dlq_jobs_total',
       help: 'Total jobs moved to dead-letter queue after max retries',
       labelNames: ['queue', 'job_name', 'failure_reason'],
+      registers: [this.registry],
+    });
+
+    this.queueActiveWorkers = new client.Gauge({
+      name: 'bullmq_queue_active_workers',
+      help: 'Number of active workers for a queue (jobs being processed)',
+      labelNames: ['queue'],
       registers: [this.registry],
     });
 
@@ -354,6 +362,10 @@ export class MetricsService implements OnModuleInit {
 
   recordDuplicateEvent(opts: { eventType: 'raw_event' | 'vote'; network: string }) {
     this.indexerDuplicateEvents.inc({ event_type: opts.eventType, network: opts.network });
+  }
+
+  recordQueueActiveWorkers(opts: { queue: string; count: number }) {
+    this.queueActiveWorkers.set({ queue: opts.queue }, opts.count);
   }
 
   async getMetrics(): Promise<string> {

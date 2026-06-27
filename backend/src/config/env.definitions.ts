@@ -138,6 +138,8 @@ export interface EnvironmentVariables {
   PAGINATION_HMAC_SECRET: string;
   DISABLE_REINDEX_WORKER: string;
   RENEWAL_REMINDER_CRON: string;
+  /** Per-queue BullMQ concurrency levels: format "queue-name=N,..." Defaults per queue if not specified. */
+  QUEUE_CONCURRENCY_MAP: string;
   /**
    * Optional incoming JWT signing key used during zero-downtime rotation.
    * When set, tokens signed with JWT_SECRET_NEXT are also accepted.
@@ -1375,6 +1377,17 @@ export const ENV_DEFINITIONS: EnvDefinitionMap = {
     example: '0 * * * *',
     required: 'required',
     schema: Joi.string().default('0 * * * *'),
+  },
+  QUEUE_CONCURRENCY_MAP: {
+    key: 'QUEUE_CONCURRENCY_MAP',
+    section: 'Queues',
+    description:
+      'Per-queue BullMQ worker concurrency levels: comma-separated "queue-name=N" pairs. ' +
+      'Queues not specified use defaults: tx-submit=1 (nonce-safe), claim-events=5, claim-payouts=3. ' +
+      'Example: "tx-submit=1,claim-events=10,claim-payouts=5"',
+    example: 'tx-submit=1,claim-events=5,claim-payouts=3',
+    required: 'optional',
+    schema: Joi.string().allow('').default(''),
   },
   JWT_SECRET_NEXT: {
     key: 'JWT_SECRET_NEXT',

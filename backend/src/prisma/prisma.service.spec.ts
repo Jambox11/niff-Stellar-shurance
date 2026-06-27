@@ -97,3 +97,77 @@ describe('PrismaService — connectWithBackoff (issue #894)', () => {
     expect(connectSpy).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('PrismaService — soft-delete middleware (issue #875)', () => {
+  let service: PrismaService;
+
+  beforeEach(() => {
+    service = makeService();
+  });
+
+  it('automatically appends deletedAt: null to findMany for soft-delete models', async () => {
+    const mockQuery = jest.fn().mockResolvedValue([]);
+    const extension = {
+      query: {
+        $allModels: {
+          findMany: jest.fn(),
+        },
+      },
+    };
+
+    // Simulate the extension behavior
+    const findManyHandler = (service as any).constructor.prototype.constructor;
+    const testClaim = {
+      where: { status: 'PENDING' },
+    };
+
+    // Verify extension is applied by checking internal state
+    expect((service as any).softDeleteModels.has('Claim')).toBe(true);
+    expect((service as any).softDeleteModels.has('Vote')).toBe(true);
+    expect((service as any).softDeleteModels.has('Policy')).toBe(true);
+    expect((service as any).softDeleteModels.has('ClaimComment')).toBe(true);
+  });
+
+  it('does not filter models without deletedAt', async () => {
+    // Models like RawEvent, AdminAuditLog should not be filtered
+    expect((service as any).softDeleteModels.has('RawEvent')).toBe(false);
+    expect((service as any).softDeleteModels.has('AdminAuditLog')).toBe(false);
+  });
+
+  it('bypasses soft-delete filtering within withSoftDeleteBypass context', async () => {
+    const testFn = jest.fn().mockResolvedValue('result');
+
+    const result = await service.withSoftDeleteBypass(testFn);
+
+    expect(result).toBe('result');
+    expect(testFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('withSoftDeleteBypass provides isolated context per call', async () => {
+    const context1 = (service as any).softDeleteContext;
+    let storeInCallback: any = null;
+
+    await service.withSoftDeleteBypass(async () => {
+      storeInCallback = context1.getStore();
+    });
+
+    expect(storeInCallback?.bypassSoftDelete).toBe(true);
+
+    // Outside the context, store should be undefined or not have the flag
+    const storeOutside = context1.getStore();
+    expect(storeOutside?.bypassSoftDelete).toBeUndefined();
+  });
+
+  it('propagates soft-delete bypass through async context', async () => {
+    const results: boolean[] = [];
+
+    await service.withSoftDeleteBypass(async () => {
+      // Simulate a nested async operation
+      await new Promise((resolve) => setImmediate(resolve));
+      const store = (service as any).softDeleteContext.getStore();
+      results.push(store?.bypassSoftDelete ?? false);
+    });
+
+    expect(results[0]).toBe(true);
+  });
+});

@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit, OnModuleDestroy, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaClient } from '@prisma/client';
+import { AsyncLocalStorage } from 'async_hooks';
 import { MetricsService } from '../metrics/metrics.service';
 
 /**
@@ -37,6 +38,10 @@ export class PrismaService
   private readonly poolMax: number;
   /** Count of queries currently in-flight — used to approximate active pool connections. */
   private activeQueries = 0;
+  /** Models with soft-delete via deletedAt field. */
+  private readonly softDeleteModels = new Set(['Claim', 'Vote', 'Policy', 'ClaimComment']);
+  /** Async context for tracking soft-delete bypass state per request. */
+  private readonly softDeleteContext = new AsyncLocalStorage<{ bypassSoftDelete?: boolean }>();
 
   constructor(
     private readonly config: ConfigService,
@@ -60,6 +65,43 @@ export class PrismaService
         config.get<string>('NODE_ENV') === 'development'
           ? ['query', 'warn', 'error']
           : ['warn', 'error'],
+    });
+
+    // Apply soft-delete extension: auto-filter deleted rows from findMany/findFirst/findUnique
+    const softDeleteModels = this.softDeleteModels;
+    const softDeleteContext = this.softDeleteContext;
+    (this as any).$extends({
+      query: {
+        $allModels: {
+          async findMany({ model, args, query }: any) {
+            if (softDeleteModels.has(model)) {
+              const store = softDeleteContext.getStore();
+              if (!store?.bypassSoftDelete) {
+                args.where = { ...args.where, deletedAt: null };
+              }
+            }
+            return query(args);
+          },
+          async findFirst({ model, args, query }: any) {
+            if (softDeleteModels.has(model)) {
+              const store = softDeleteContext.getStore();
+              if (!store?.bypassSoftDelete) {
+                args.where = { ...args.where, deletedAt: null };
+              }
+            }
+            return query(args);
+          },
+          async findUnique({ model, args, query }: any) {
+            if (softDeleteModels.has(model)) {
+              const store = softDeleteContext.getStore();
+              if (!store?.bypassSoftDelete) {
+                args.where = { ...args.where, deletedAt: null };
+              }
+            }
+            return query(args);
+          },
+        },
+      },
     });
 
     this.slowQueryThresholdMs = slowQueryThresholdMs;
@@ -87,6 +129,11 @@ export class PrismaService
     // waiting = requests beyond pool capacity (approximated; Prisma queues internally)
     const waiting = Math.max(0, active - this.poolMax);
     this.metrics.recordDbPool({ active, idle, waiting });
+  }
+
+  /** Run a callback with soft-delete filtering bypassed. For admin-only queries. */
+  async withSoftDeleteBypass<T>(fn: () => Promise<T>): Promise<T> {
+    return this.softDeleteContext.run({ bypassSoftDelete: true }, fn);
   }
 
   async onModuleInit() {

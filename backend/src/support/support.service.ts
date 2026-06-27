@@ -75,6 +75,36 @@ export class SupportService {
     return this.mapToResponse(updated);
   }
 
+  async assignTicket(ticketId: string, assignee: string | null, actor: string, ipAddress?: string) {
+    const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
+    if (!ticket) {
+      throw new BadRequestException(`Ticket ${ticketId} not found`);
+    }
+
+    const prevAssignee = ticket.assignedTo;
+    const updated = await this.prisma.supportTicket.update({
+      where: { id: ticketId },
+      data: { assignedTo: assignee, updatedAt: new Date() },
+    });
+
+    await this.prisma.adminAuditLog.create({
+      data: {
+        actor,
+        action: 'support_ticket_assigned',
+        payload: {
+          ticketId,
+          from: prevAssignee,
+          to: assignee,
+          timestamp: new Date().toISOString(),
+        },
+        ipAddress,
+      },
+    });
+
+    this.logger.log(`Support ticket ${ticketId} assigned to ${assignee ?? 'unassigned'}`);
+    return this.mapToResponse(updated);
+  }
+
   async getTicket(ticketId: string) {
     const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
     if (!ticket) {
@@ -83,14 +113,16 @@ export class SupportService {
     return this.mapToResponse(ticket);
   }
 
-  async listTickets(limit = 50, offset = 0) {
+  async listTickets(limit = 50, offset = 0, assignedTo?: string | null) {
+    const where = assignedTo !== undefined ? { assignedTo: assignedTo || undefined } : {};
     const [tickets, total] = await Promise.all([
       this.prisma.supportTicket.findMany({
+        where,
         take: limit,
         skip: offset,
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.supportTicket.count(),
+      this.prisma.supportTicket.count({ where }),
     ]);
 
     return {
@@ -230,6 +262,7 @@ export class SupportService {
       subject: ticket.subject,
       message: ticket.message,
       status: ticket.status,
+      assignedTo: ticket.assignedTo ?? null,
       ipHash: ticket.ipHash ?? '',
       firstRespondedAt: ticket.firstRespondedAt ?? null,
       createdAt: ticket.createdAt,
