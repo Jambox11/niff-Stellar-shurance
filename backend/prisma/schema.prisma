@@ -284,12 +284,15 @@ model SupportTicket {
   /// One-way hash of submitter IP for spam detection (no raw IP stored).
   ipHash           String?
   status           TicketStatus @default(OPEN)
+  /// Staff member assigned to handle this ticket (null = unassigned).
+  assignedTo       String?      @map("assigned_to")
   /// Set once when the first staff status update is recorded.
   firstRespondedAt DateTime?    @map("first_responded_at")
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
   @@index([status])
+  @@index([assignedTo])
   @@index([createdAt])
   @@index([firstRespondedAt])
   @@map("support_tickets")

@@ -44,6 +44,7 @@ import { AdminAnalyticsService } from './admin-analytics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SorobanService } from '../rpc/soroban.service';
 import { TokenBlacklistService } from '../auth/token-blacklist.service';
+import { SupportService } from '../support/support.service';
 
 class BatchRegisterVotersDto {
   @IsArray()
@@ -82,6 +83,10 @@ class RevokeTokenDto {
   @IsInt() expiresAt!: number;
 }
 
+class AssignTicketDto {
+  @IsOptional() @IsString() assignee?: string | null;
+}
+
 type AdminRequest = Request & {
   user?: {
     walletAddress?: string;
@@ -118,6 +123,7 @@ export class AdminController {
     private readonly prisma: PrismaService,
     private readonly sorobanService: SorobanService,
     private readonly tokenBlacklist: TokenBlacklistService,
+    private readonly supportService: SupportService,
   ) {}
 
   // ── Governance: Voters ────────────────────────────────────────────
@@ -962,5 +968,39 @@ export class AdminController {
       payload: { jti: dto.jti },
       ipAddress: req.ip,
     });
+  }
+
+  // ── Support: Ticket Management ─────────────────────────────────────
+
+  /**
+   * GET /admin/support/tickets
+   *
+   * List all support tickets with optional filtering.
+   */
+  @Get('support/tickets')
+  @MinAdminRole('viewer')
+  @ApiOperation({ summary: 'List support tickets' })
+  async listSupportTickets(
+    @Query('limit', new ParseIntPipe({ optional: true })) limit?: number,
+    @Query('offset', new ParseIntPipe({ optional: true })) offset?: number,
+    @Query('assignedTo') assignedTo?: string,
+  ) {
+    return this.supportService.listTickets(limit || 50, offset || 0, assignedTo);
+  }
+
+  /**
+   * PATCH /admin/support/tickets/:id/assign
+   *
+   * Assign a support ticket to a staff member or unassign it.
+   */
+  @Patch('support/tickets/:id/assign')
+  @ApiOperation({ summary: 'Assign support ticket to staff member' })
+  async assignSupportTicket(
+    @Param('id') ticketId: string,
+    @Body() dto: AssignTicketDto,
+    @Req() req: AdminRequest,
+  ) {
+    const actor = req.adminIdentity?.staffId || req.adminIdentity?.email || 'unknown';
+    return this.supportService.assignTicket(ticketId, dto.assignee ?? null, actor, req.ip);
   }
 }
