@@ -43,6 +43,7 @@ import { AdminStatsService } from './admin-stats.service';
 import { AdminAnalyticsService } from './admin-analytics.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SorobanService } from '../rpc/soroban.service';
+import { TokenBlacklistService } from '../auth/token-blacklist.service';
 
 class BatchRegisterVotersDto {
   @IsArray()
@@ -74,6 +75,11 @@ class PrivacyRequestDto {
 class SetClaimSeverityDto {
   @IsIn(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'])
   severity!: ClaimSeverity;
+}
+
+class RevokeTokenDto {
+  @IsString() jti!: string;
+  @IsInt() expiresAt!: number;
 }
 
 type AdminRequest = Request & {
@@ -111,6 +117,7 @@ export class AdminController {
     private readonly adminAnalyticsService: AdminAnalyticsService,
     private readonly prisma: PrismaService,
     private readonly sorobanService: SorobanService,
+    private readonly tokenBlacklist: TokenBlacklistService,
   ) {}
 
   // ── Governance: Voters ────────────────────────────────────────────
@@ -925,5 +932,35 @@ export class AdminController {
       ipAddress: req.ip,
     });
     return result;
+  }
+
+  // ── Auth: Token Management ─────────────────────────────────────────
+
+  /**
+   * POST /admin/auth/revoke
+   *
+   * Revoke a JWT token immediately by adding to Redis blacklist.
+   * Token remains blacklisted until its expiry time.
+   */
+  @Post('auth/revoke')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Revoke a JWT token' })
+  async revokeToken(@Body() dto: RevokeTokenDto, @Req() req: AdminRequest) {
+    if (!dto.jti || dto.jti.length === 0) {
+      throw new BadRequestException('jti must be a non-empty string');
+    }
+    if (!Number.isInteger(dto.expiresAt) || dto.expiresAt <= 0) {
+      throw new BadRequestException('expiresAt must be a positive integer (Unix timestamp)');
+    }
+
+    await this.tokenBlacklist.revokeToken(dto.jti, dto.expiresAt);
+
+    const actor = req.adminIdentity?.staffId || req.adminIdentity?.email || 'unknown';
+    await this.auditService.write({
+      actor,
+      action: 'auth_token_revoke',
+      payload: { jti: dto.jti },
+      ipAddress: req.ip,
+    });
   }
 }
